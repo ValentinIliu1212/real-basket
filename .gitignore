@@ -9,3 +9,4 @@ sessions/
 .streamlit/secrets.toml
 .pydevproject
 /reports/
+/data_store/

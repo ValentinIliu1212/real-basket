@@ -141,3 +141,26 @@ flowchart TD
 5. **Investigation loop** for deviations above the threshold.
 6. **Human-in-the-loop** (interrupts) and **memory** of source reliability.
 7. **Scheduler trigger** (monthly run) and alerting.
+
+## 7. Implementation status (November 2026)
+
+Steps 1, 2, 4, 5 and 6 are implemented in `src/real_basket/flow/`; steps 3 and 7 are open (still demo sources,
+no scheduler). Run with `poetry run real-basket-flow` or the **🔄 Monitoring runs** tab of the dashboard.
+
+| Design element | Implementation |
+|----------------|----------------|
+| Planner / Collector / Validator / Analyst / Reporter | Five Strands agents (`REALBASKET-PLANNER`, …) as nodes of a `strands.multiagent.GraphBuilder` graph, each with its own tools (`flow/tools.py`) |
+| Fixed calculation engine | Deterministic `FunctionNode`s (`plan_gate`, `quality_checks`, `validation_gate`, `calculate`, `release_gate`, `publish`) wrapping `core/engine.py`, `core/validation.py` |
+| Loops | Conditional edges: validator → collector (retry with alternative source), analyst → planner (re-plan), investigation tool calls inside the analyst |
+| Hallucinated prices | Prices only enter via `fetch` from the source registry; every row carries its source; raw snapshot stored per fetch; missing provenance is a critical issue |
+| Critical data | Hard rule in code: a dataset with critical issues can never be accepted, whatever the validator agent decides |
+| Endless loops / cost | `MAX_SOURCE_ATTEMPTS`, `MAX_INVESTIGATION_STEPS`, `MAX_REPLANS`, `MAX_NODE_EXECUTIONS`, `RUN_TIMEOUT_S` |
+| Reproducible numbers | Accepted data stored as `dataset.json` with hash; tests recompute the results from it |
+| Mandatory disclaimer | Appended by code (demo-data note, provenance footer, disclaimer) — the reporter cannot drop it |
+| Human-in-the-loop | Pluggable approver (`deferred` → approve / reject in the dashboard, `interactive` CLI, `auto` demo); confidence is computed in code from data quality and coverage. Strands interrupts are not used yet |
+| Memory | `data_store/memory.json`: source reliability and past results, given to the planner of the next run |
+| Audit | `audit.jsonl` per run: plan, fetches, validator decisions, gates, investigations, human decisions |
+
+**Remaining randomness vs. reproducibility:** two runs may plan differently, pick different sources, retry a
+different number of times or investigate differently (demo sources fail randomly, `DEMO_FAULT_RATE`). For the
+same stored `dataset.json`, the numbers are always identical.

@@ -12,16 +12,18 @@ from real_basket.agents.tools import (
     fetch_official_cpi,
     fetch_prices,
     fetch_regional_rents,
+    investigate_deviation,
+    run_monitoring_flow,
 )
 from real_basket.core.settings import get_settings
 
 
-def create_model() -> OpenAIModel:
+def create_model(temperature: float = 0.2) -> OpenAIModel:
     settings = get_settings()
     return OpenAIModel(
         client_args={"api_key": settings.OPENAI_API_KEY},
         model_id=settings.OPENAI_MODEL_ID,
-        params={"temperature": 0.2},
+        params={"temperature": temperature},
     )
 
 
@@ -46,6 +48,6 @@ def create_orchestrator() -> Agent:
         system_prompt=ORCHESTRATOR_PROMPT,
         model=create_model(),
         tools=[collect_category_prices, fetch_official_cpi, calculate_essential_vs_cpi, fetch_regional_rents,
-               fetch_net_salaries],
+               fetch_net_salaries, investigate_deviation, run_monitoring_flow],
         callback_handler=None,
     )

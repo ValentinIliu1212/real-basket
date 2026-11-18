@@ -42,8 +42,9 @@ c1.metric("Essential inflation (YoY)", f"{latest['essential_yoy_pct']:.2f} %")
 c2.metric("Official CPI (YoY)", f"{latest['cpi_yoy_pct']:.2f} %")
 c3.metric("Deviation", f"{latest['deviation_pp']:+.2f} pp")
 
-tab_idx, tab_yoy, tab_cat, tab_rent, tab_income, tab_agent = st.tabs(
-    ["Index", "YoY rates", "Categories", "🏠 Miete regional", "💶 Nettogehalt", "🤖 Ask the agent"])
+tab_idx, tab_yoy, tab_cat, tab_rent, tab_income, tab_flow, tab_agent = st.tabs(
+    ["Index", "YoY rates", "Categories", "🏠 Miete regional", "💶 Nettogehalt", "🔄 Monitoring runs",
+     "🤖 Ask the agent"])
 with tab_idx:
     st.plotly_chart(px.line(comparison[["essential_index", "cpi_index"]], labels={"value": "Index (base=100)"}),
                     use_container_width=True)
@@ -126,6 +127,59 @@ with tab_income:
     bur_display = burden_tbl.copy()
     bur_display.loc["Ø alle Bundesländer"] = burden_tbl.mean(axis=0)
     st.dataframe(bur_display.style.format("{:.1f} %"), use_container_width=True)
+
+with tab_flow:
+    from real_basket.core.store import DataStore
+    from real_basket.flow.runner import DEFAULT_GOALS
+    from real_basket.schemas.flow import Trigger
+
+    st.caption("Non-deterministic monitoring flow: agents plan, choose sources, validate (with retries), "
+               "investigate and report; numbers come from the deterministic engine. "
+               "See docs/process-redesign.md.")
+    store = DataStore()
+    with st.form("start_run"):
+        f1, f2 = st.columns([1, 3])
+        trig = Trigger(f1.selectbox("Trigger", [t.value for t in Trigger]))
+        goal = f2.text_input("Goal (empty = default for the trigger)")
+        auto = st.checkbox("Auto-approve (demo only: human decisions are taken automatically)")
+        if st.form_submit_button("▶ Start monitoring run"):
+            from real_basket.flow.graph import auto_approver, deferred_approver, run_flow
+
+            with st.spinner("Agents are planning, collecting, validating and analysing..."):
+                ctx = run_flow(goal or DEFAULT_GOALS[trig], trigger=trig,
+                               approver=auto_approver if auto else deferred_approver,
+                               weights={c.value: w for c, w in weights.weights.items()}, store=store)
+            st.success(f"Run {ctx.run_id}: {ctx.run_status.value} (confidence {ctx.confidence})")
+
+    runs = store.list_runs()
+    if not runs:
+        st.info("No runs yet.")
+    for run in runs[:10]:
+        res = run.get("results") or {}
+        title = (f"{run['run_id']} · {run['trigger']} · **{run['status']}** · confidence {run.get('confidence')}"
+                 + (f" · deviation {res['deviation_pp']:+.2f} pp" if res else ""))
+        with st.expander(title, expanded=run["status"] == "pending_approval"):
+            st.write("**Goal:** " + run["goal"])
+            st.write("**Path:** " + " → ".join(run.get("path", [])))
+            st.dataframe(pd.DataFrame([{"dataset": d, "status": v["status"], "attempts": v["attempts"],
+                                        "sources tried": ", ".join(v["sources_tried"]), "score": v["score"]}
+                                       for d, v in run.get("datasets", {}).items()]),
+                         use_container_width=True, hide_index=True)
+            if run["status"] == "pending_approval":
+                st.warning("Confidence below threshold – a human must approve before publishing.")
+                from real_basket.flow.steps import publish_run, reject_run
+
+                reason = st.text_input("Reason (optional, stored in the audit trail)", key=f"why_{run['run_id']}")
+                a1, a2 = st.columns(2)
+                if a1.button("✅ Approve & publish", key=f"ok_{run['run_id']}"):
+                    publish_run(store, run["run_id"], approved_by="dashboard")
+                    st.rerun()
+                if a2.button("❌ Reject", key=f"no_{run['run_id']}"):
+                    reject_run(store, run["run_id"], rejected_by="dashboard", reason=reason)
+                    st.rerun()
+            st.markdown((run.get("report") or {}).get("final_markdown", "_no report_"))
+            if st.checkbox("Show audit trail", key=f"audit_{run['run_id']}"):
+                st.dataframe(pd.DataFrame(store.load_audit(run["run_id"])).astype(str), use_container_width=True)
 
 with tab_agent:
     if "messages" not in st.session_state:

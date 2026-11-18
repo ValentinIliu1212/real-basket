@@ -26,6 +26,7 @@ ruff = "^0.6.0"
 [tool.poetry.scripts]
 real-basket-cli = "real_basket.cli:main"
 real-basket-pdf = "real_basket.reports.pdf_report:main"
+real-basket-flow = "real_basket.flow.runner:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

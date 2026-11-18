@@ -20,35 +20,66 @@ baskets of goods and different weightings.
 | Net salaries | Ø monthly net salary (full-time) per federal state, per year and total |
 | Rent burden | Share of net salary needed for the net cold rent of a flat (default 70 m², adjustable) |
 | PDF reports | One PDF per year + average rent report + net salary / rent burden report (German, EUR) |
-| AI agent | Strands multi-agent system answering questions in natural language based on tool results |
+| AI agent | Strands chat agent answering questions in natural language based on tool results |
+| **Monitoring flow** | **Non-deterministic multi-agent process** (Strands Graph): planner → collector → validator loop → fixed calculation → analyst with investigation / re-planning → reporter → human approval → publish, with audit trail and memory |
 
 ## Architecture
 
-> Target architecture (non-deterministic agentic process): see [docs/process-redesign.md](docs/process-redesign.md).
+Design rationale and process diagram: [docs/process-redesign.md](docs/process-redesign.md).
+
+**1. Non-deterministic monitoring flow** (`src/real_basket/flow/`, Strands `GraphBuilder`)
 
 ```
-Streamlit UI / CLI ──► Orchestrator Agent (Strands, "RealBasket Analyst")
-                         ├─ collect_category_prices ──► Collector Agent ──► fetch_prices (food/rent/energy/mobility)
-                         ├─ fetch_official_cpi
-                         ├─ calculate_essential_vs_cpi ──► core/index.py   (weighted essential index vs. CPI)
-                         ├─ fetch_regional_rents       ──► rent per state / city (latest, Ø, YoY)
-                         └─ fetch_net_salaries         ──► core/income.py  (Ø net salary, rent burden)
+trigger (schedule / question / price_alert)
+  └► PLANNER agent ─► plan_gate ─► COLLECTOR agent ─► quality_checks ─► VALIDATOR agent ─► validation_gate
+         ▲                              ▲                                                     │ retry: other source
+         │                              └─────────────────────────────────────────────────────┤ (max 3 attempts)
+         │                                                     exhausted ─► human_review ─────┤
+         │                                                                                    ▼
+         └──── re-plan (max 1) ◄── ANALYST agent ◄── calculate (fixed code, no LLM) ◄─────────┘
+                                     │ investigate_deviation (category / item / region, max 4)
+                                     ▼
+                                 REPORTER agent ─► release_gate ─(confidence < 0.7: human approval)─► publish
+```
+
+- **Agents decide** (UPPERCASE): what to collect, which source, accept/retry/exclude, how deep to investigate,
+  whether to re-plan, which outputs (chat / pdf / alert).
+- **Code decides** (lowercase gates): budgets, hard quality rules (critical data can never be accepted),
+  the numbers (`core/engine.py`), the confidence score and the mandatory disclaimer + provenance footer.
+- Every run is stored in `data_store/runs/<run_id>/` (`run.json`, `dataset.json` with hash, raw source snapshots,
+  `audit.jsonl`, published `report.md` / `report.pdf` / `alert.json`); `data_store/memory.json` keeps source
+  reliability and past results for the next plan.
+
+**2. Interactive chat agent** (`src/real_basket/agents/`, front door for ad-hoc questions)
+
+```
+Streamlit UI / CLI ──► Orchestrator Agent ("RealBasket Analyst")
+                         ├─ collect_category_prices ──► Collector Agent ──► fetch_prices
+                         ├─ fetch_official_cpi / calculate_essential_vs_cpi
+                         ├─ fetch_regional_rents / fetch_net_salaries
+                         ├─ investigate_deviation      ──► core/investigation.py
+                         └─ run_monitoring_flow        ──► starts the monitoring flow above
 ```
 
 ```
 src/real_basket/
-├── agents/          # Strands agents (orchestrator.py), prompts.py, tools.py
+├── agents/          # chat agent (orchestrator.py), prompts.py, tools.py
+├── flow/            # monitoring flow: graph.py (Strands Graph), steps.py (deterministic nodes),
+│                    #   tools.py (tools of the flow agents), context.py (run state), runner.py (CLI)
 ├── core/
-│   ├── index.py     # essential index + CPI comparison
-│   ├── rents.py     # Ø rent per region (per year / total)
-│   ├── income.py    # Ø net salary per state + rent burden
-│   └── settings.py  # .env based configuration
-├── data/demo_data.py  # synthetic demo data (replace with real collectors)
+│   ├── engine.py        # deterministic results (index, CPI deviation, dataset hash)
+│   ├── index.py         # essential index + CPI comparison
+│   ├── investigation.py # drill-down by category / item / region
+│   ├── validation.py    # data quality rules (outliers, gaps, provenance)
+│   ├── store.py         # data store, audit trail, memory
+│   ├── rents.py / income.py  # Ø rents, net salaries, rent burden
+│   └── settings.py      # .env based configuration incl. guardrail budgets
+├── data/            # demo_data.py (synthetic), sources.py (source registry with alternatives)
 ├── reports/pdf_report.py  # PDF generation (reportlab)
-├── schemas/models.py  # pydantic models (PricePoint, CpiPoint, IncomePoint, ...)
-├── ui/app.py        # Streamlit dashboard + agent chat
-└── cli.py           # CLI entry point
-tests/               # pytest
+├── schemas/         # models.py (prices, CPI, ...), flow.py (plan, validation, audit)
+├── ui/app.py        # Streamlit dashboard, monitoring tab with approval, agent chat
+└── cli.py           # chat CLI
+tests/               # pytest (flow tests use scripted agents, no API key needed)
 ```
 
 ## Setup
@@ -77,7 +108,18 @@ poetry run real-basket-cli "In welchem Bundesland ist die Mietbelastung am höch
 
 # PDF reports for the last 60 months (written to ./reports, git-ignored)
 poetry run real-basket-pdf --months 60 --out reports
+
+# Non-deterministic monitoring flow (runs stored in ./data_store, git-ignored)
+poetry run real-basket-flow --trigger schedule
+poetry run real-basket-flow --trigger question --goal "Why is rent rising faster than the CPI?"
+poetry run real-basket-flow --trigger price_alert --goal "Fuel prices jumped" --approve interactive
 ```
+
+`--approve`: `deferred` (default, low-confidence runs wait for approval in the dashboard), `interactive`
+(ask in the terminal) or `auto` (demo only). Guardrails are configurable in `.env`: `MAX_SOURCE_ATTEMPTS`,
+`MAX_INVESTIGATION_STEPS`, `MAX_REPLANS`, `MAX_NODE_EXECUTIONS`, `RUN_TIMEOUT_S`, `DEVIATION_THRESHOLD_PP`,
+`CONFIDENCE_THRESHOLD`. `DEMO_FAULT_RATE` (default 0.35) makes demo sources randomly deliver faulty data so the
+validation loop is exercised; set `DEMO_FAULT_SEED` for reproducible demos, `DEMO_FAULT_RATE=0` for clean data.
 
 ### Dashboard tabs
 
@@ -88,6 +130,7 @@ poetry run real-basket-pdf --months 60 --out reports
 | Categories | Index per category (food, rent, energy, mobility) |
 | 🏠 Miete regional | Rent per m² per state / city: current, Ø period, YoY, comparison chart, Ø per year |
 | 💶 Nettogehalt | Ø net salary per state, rent burden with flat-size slider, tables per year |
+| 🔄 Monitoring runs | Start a monitoring flow run, see path / datasets / report per run, approve or reject pending runs, audit trail |
 | 🤖 Ask the agent | Chat with the RealBasket agent |
 
 ### PDF reports
@@ -134,10 +177,12 @@ objects, so the calculations stay unchanged.
 - [ ] Implement real collectors per category and switch via `USE_DEMO_DATA=false` (setting exists, not yet evaluated)
 - [ ] Real regional rents per state / city (BBSR, Destatis, price atlases)
 - [ ] Real net salaries per state (gross from Destatis → net calculation, or BA Entgeltatlas)
-- [ ] Store the source (URL / API) in every data point and show it in the UI and PDFs
+- [x] Store the source and a raw snapshot for every data point (monitoring flow, `data_store/`)
+- [ ] Register real sources (with alternatives) in `src/real_basket/data/sources.py` so the collector agent can choose them
+- [ ] Show sources in the dashboard tabs and the yearly PDFs (so far only in monitoring reports)
 
 ### 2. Data & methodology
-- [ ] Persist collected data (SQLite / parquet) so that history builds up over time
+- [ ] Move the file-based data store to SQLite / parquet so history builds up across runs
 - [ ] Validate basket weights (e.g. derive from Destatis household budget survey / EVS)
 - [ ] Optional population weighting for "Ø across all regions"
 - [ ] Rent burden per city (requires net salaries per city)
@@ -145,10 +190,14 @@ objects, so the calculations stay unchanged.
 - [ ] Keep the disclaimer visible: a deviation does **not** mean the CPI is wrong — different basket and weights
 
 ### 3. Agents
-- [ ] Make the agent always state explicitly when answers are based on demo data
-- [ ] Turn the collector into dedicated agents per category (multi-agent / graph pattern)
+- [x] Non-deterministic monitoring flow (planner, collector, validator, analyst, reporter as Strands Graph)
+- [x] Validation / retry loop, investigation loop, re-planning, human approval, audit trail, source memory
+- [x] Monitoring reports always state demo data, provenance and the disclaimer (enforced in code)
+- [ ] Make the chat agent always state explicitly when answers are based on demo data
+- [ ] Dedicated collector agents per category running in parallel (Swarm / parallel graph nodes)
+- [ ] Scheduler for the monthly `schedule` trigger and real price-alert triggers
+- [ ] Web search / fetch tools for source discovery; optional: expose collectors as MCP tools
 - [ ] Add session management (Strands `FileSessionManager`) for chat history
-- [ ] Optional: expose collectors as MCP tools
 
 ### 4. UI & reports
 - [ ] Align the dashboard period with the PDF period (dashboard currently shows 24 months from 01/2024)
