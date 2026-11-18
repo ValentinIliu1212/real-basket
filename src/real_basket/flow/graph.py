@@ -164,7 +164,7 @@ def _remember(ctx: RunContext) -> None:
     r = ctx.results or {}
     ctx.memory.add_run({"run_id": ctx.run_id, "trigger": ctx.trigger.value, "status": ctx.run_status.value,
                         "goal": ctx.goal[:120], "period": r.get("period"), "deviation_pp": r.get("deviation_pp"),
-                        "excluded": r.get("excluded_categories", []),
+                        "reused": {d: r["reason"] for d, r in ctx.reused.items()},
                         "retries": {d: a for d, a in ctx.attempts.items() if a > 1}})
     ctx.memory.save()
 
@@ -186,7 +186,7 @@ def cli_approver(kind: str, payload: dict) -> Any:
         print(f"\n[HUMAN REVIEW] Dataset '{payload['dataset']}' needs a decision.")
         print(f"Quality report: {payload['report']}")
         return "accept" if input("Accept anyway? [y/N] ").strip().lower() == "y" else "exclude"
-    print(f"\n[APPROVAL] Confidence {payload['confidence']} is below the threshold.\n")
+    print(f"\n[APPROVAL] Human approval required: {payload.get('reason')} (confidence {payload['confidence']}).\n")
     print(payload["markdown"])
     answer = input("\nPublish? [y]es / [n]o / [l]ater: ").strip().lower()
     return {"y": True, "n": False}.get(answer)

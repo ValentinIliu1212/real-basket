@@ -58,8 +58,8 @@ flowchart TD
     T(["Trigger:<br/>monthly schedule / user question / price alert"]) --> P
 
     subgraph NDET1["Non-deterministic: data acquisition (agents decide the path)"]
-        P["Planner Agent<br/>interprets the goal and builds a dynamic plan:<br/>categories, regions, period, depth"]
-        P --> C{"Which data<br/>is needed?"}
+        P["Planner Agent<br/>interprets the goal and builds a dynamic plan:<br/>focus, period, depth, fresh vs. re-used data<br/>(always the complete basket)"]
+        P --> C{"Which data must<br/>be fetched fresh?"}
         C -->|food| CF["Food Collector Agent"]
         C -->|rent| CR["Rent Collector Agent"]
         C -->|energy| CE["Energy Collector Agent"]
@@ -102,7 +102,9 @@ flowchart TD
 
 ### Why this flow is non-deterministic
 
-- **Dynamic branching:** the planner decides at runtime which collectors run, for which regions and periods.
+- **Dynamic branching:** the planner decides at runtime which datasets are fetched fresh and which are re-used
+  from the data store, the period and the focus. The *scope* is fixed: the essential index always uses the
+  complete basket (see section 8).
 - **Loops with an unknown number of iterations:** the validation loop (alternative sources) and the
   investigation loop (re-planning when more data is needed).
 - **LLM judgement at decision points:** data quality, whether a deviation is relevant, which output fits.
@@ -157,10 +159,42 @@ no scheduler). Run with `poetry run real-basket-flow` or the **🔄 Monitoring r
 | Endless loops / cost | `MAX_SOURCE_ATTEMPTS`, `MAX_INVESTIGATION_STEPS`, `MAX_REPLANS`, `MAX_NODE_EXECUTIONS`, `RUN_TIMEOUT_S` |
 | Reproducible numbers | Accepted data stored as `dataset.json` with hash; tests recompute the results from it |
 | Mandatory disclaimer | Appended by code (demo-data note, provenance footer, disclaimer) — the reporter cannot drop it |
-| Human-in-the-loop | Pluggable approver (`deferred` → approve / reject in the dashboard, `interactive` CLI, `auto` demo); confidence is computed in code from data quality and coverage. Strands interrupts are not used yet |
+| Human-in-the-loop | Pluggable approver (`deferred` → approve / reject in the dashboard, `interactive` CLI, `auto` demo); confidence is computed in code from data quality, re-used data and human overrides; fallback to stored data always needs approval. Strands interrupts are not used yet |
 | Memory | `data_store/memory.json`: source reliability and past results, given to the planner of the next run |
 | Audit | `audit.jsonl` per run: plan, fetches, validator decisions, gates, investigations, human decisions |
 
 **Remaining randomness vs. reproducibility:** two runs may plan differently, pick different sources, retry a
 different number of times or investigate differently (demo sources fail randomly, `DEMO_FAULT_RATE`). For the
 same stored `dataset.json`, the numbers are always identical.
+
+## 8. Orchestration and basket completeness
+
+**Who orchestrates?** The monitoring flow has no central LLM supervisor on purpose. The Strands `Graph`
+is the orchestrator: its conditional edges (`RunContext.next_after_*`) route the run deterministically from
+the run state. The agents decide *inside* their nodes (plan, source, accept/retry, investigation depth,
+re-plan, outputs), but they cannot skip a gate, exceed a budget or bypass human approval. The chat front
+door (`REALBASKET-ORCHESTRATOR`) is a classic LLM orchestrator that calls tools and can start a monitoring run.
+
+**The essential index needs the complete basket.** It is a weighted basket (rent 40 %, food 30 %,
+energy 15 %, mobility 15 %) compared with the headline CPI. An index over a subset with re-normalised
+weights would be a *different* index: not comparable with earlier runs, and its deviation from the CPI would
+be meaningless. Therefore:
+
+| Rule (enforced in code) | Where |
+|-------------------------|-------|
+| Every plan covers all categories + CPI; a partial plan is amended and logged (`plan_amended`) | `RunContext.set_plan` |
+| The engine refuses to calculate an incomplete basket (no silent re-weighting); only weight-0 categories may be absent | `engine.compute_results`, `engine.missing_for_basket` |
+| Without the complete basket the run fails (`refused_incomplete_basket`) instead of publishing | `steps.calculate`, `release_gate` |
+
+**Where partial *retrieval* is still realistic** (the calculation always uses the complete basket):
+
+| Scenario | Behaviour |
+|----------|-----------|
+| Different update frequencies (rents quarterly, CPI / fuel monthly) | The planner puts slow-moving datasets into `reuse`; they are taken from the last validated run. Up to `MAX_CARRY_FORWARD_MONTHS` (default 3) trailing months are carried forward with the last observed value, marked `(carried forward)`, confidence −0.05 per dataset |
+| Re-plan / retry | Only the datasets requested by the analyst or rejected by the validator are fetched again; accepted data is kept |
+| Source outage (fresh data lost after all retries) | Fallback to the last validated stored data, which **always requires human approval** (confidence −0.10); if no usable stored data exists, the run fails |
+| Question about one category ("why is rent rising?") | Complete basket, `focus` = the category; the analyst explains its contribution and gap within the basket. Pure category / region questions without the index (regional rents, salaries, rent burden) are answered by the chat agent's tools |
+
+Stored data is only re-used if it was fetched and accepted in a run that was not rejected, and never from data
+that was itself re-used, so carry-forward cannot chain across runs. Stored data that is too old, has gaps or
+fails the quality rules is not re-used (`reuse_unavailable` in the audit trail); the dataset is fetched fresh.

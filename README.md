@@ -42,10 +42,17 @@ trigger (schedule / question / price_alert)
                                  REPORTER agent ─► release_gate ─(confidence < 0.7: human approval)─► publish
 ```
 
-- **Agents decide** (UPPERCASE): what to collect, which source, accept/retry/exclude, how deep to investigate,
-  whether to re-plan, which outputs (chat / pdf / alert).
+- **Orchestration:** the Strands Graph routes the run in code (conditional edges on the run state); there is
+  no free-roaming supervisor LLM, so gates, budgets and approvals cannot be skipped.
+- **Agents decide** (UPPERCASE): which datasets to fetch fresh vs. re-use from the data store, focus and period,
+  which source, accept/retry/exclude, how deep to investigate, whether to re-plan, which outputs (chat / pdf / alert).
 - **Code decides** (lowercase gates): budgets, hard quality rules (critical data can never be accepted),
-  the numbers (`core/engine.py`), the confidence score and the mandatory disclaimer + provenance footer.
+  **basket completeness** (every run covers food, rent, energy, mobility + CPI; the engine refuses an
+  incomplete basket instead of re-weighting), the numbers (`core/engine.py`), the confidence score and the
+  mandatory disclaimer + provenance footer.
+- **Re-use of stored data:** slow-moving data (e.g. rents) can be re-used from the last validated run, with up to
+  `MAX_CARRY_FORWARD_MONTHS` (default 3) months carried forward and flagged. If fresh data is lost after all
+  retries, stored data is used as a fallback only with human approval; otherwise the run fails.
 - Every run is stored in `data_store/runs/<run_id>/` (`run.json`, `dataset.json` with hash, raw source snapshots,
   `audit.jsonl`, published `report.md` / `report.pdf` / `alert.json`); `data_store/memory.json` keeps source
   reliability and past results for the next plan.
@@ -129,7 +136,7 @@ poetry run real-basket-flow --trigger price_alert --goal "Fuel prices jumped" --
 `--approve`: `deferred` (default, low-confidence runs wait for approval in the dashboard), `interactive`
 (ask in the terminal) or `auto` (demo only). Guardrails are configurable in `.env`: `MAX_SOURCE_ATTEMPTS`,
 `MAX_INVESTIGATION_STEPS`, `MAX_REPLANS`, `MAX_NODE_EXECUTIONS`, `RUN_TIMEOUT_S`, `DEVIATION_THRESHOLD_PP`,
-`CONFIDENCE_THRESHOLD`. `DEMO_FAULT_RATE` (default 0.35) makes demo sources randomly deliver faulty data so the
+`CONFIDENCE_THRESHOLD`, `MAX_CARRY_FORWARD_MONTHS`. `DEMO_FAULT_RATE` (default 0.35) makes demo sources randomly deliver faulty data so the
 validation loop is exercised; set `DEMO_FAULT_SEED` for reproducible demos, `DEMO_FAULT_RATE=0` for clean data.
 
 ### Dashboard tabs
@@ -158,6 +165,8 @@ validation loop is exercised; set `DEMO_FAULT_SEED` for reproducible demos, `DEM
 - **Category index:** mean of item price relatives vs. base month (= 100).
 - **Essential index:** weighted sum of category indices (default: rent 40 %, food 30 %, energy 15 %, mobility 15 %).
 - **CPI comparison:** YoY rates of both indices; deviation = essential YoY − CPI YoY in percentage points (pp).
+- **Complete basket:** the essential index is only calculated when all categories (weight > 0) and the CPI are
+  available for the period; no re-weighting over a subset.
 - **Ø per year:** mean of the available months of that year (first/last year of the period may be incomplete).
 - **Ø across all regions:** unweighted mean (not weighted by population).
 - **Rent burden:** Ø rent €/m² × flat size (default 70 m²) ÷ Ø monthly net salary × 100.
@@ -204,6 +213,9 @@ objects, so the calculations stay unchanged.
 - [x] Non-deterministic monitoring flow (planner, collector, validator, analyst, reporter as Strands Graph)
 - [x] Validation / retry loop, investigation loop, re-planning, human approval, audit trail, source memory
 - [x] Monitoring reports always state demo data, provenance and the disclaimer (enforced in code)
+- [x] Basket completeness enforced (no partial plans / re-weighting), planned re-use of stored data with
+      carry-forward, fallback to stored data only with human approval
+- [ ] Compare a focus category with the matching official CPI sub-index (e.g. energy vs. CPI energy)
 - [ ] Make the chat agent always state explicitly when answers are based on demo data
 - [ ] Dedicated collector agents per category running in parallel (Swarm / parallel graph nodes)
 - [ ] Scheduler for the monthly `schedule` trigger and real price-alert triggers

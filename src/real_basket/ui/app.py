@@ -162,11 +162,15 @@ with tab_flow:
             st.write("**Goal:** " + run["goal"])
             st.write("**Path:** " + " → ".join(run.get("path", [])))
             st.dataframe(pd.DataFrame([{"dataset": d, "status": v["status"], "attempts": v["attempts"],
-                                        "sources tried": ", ".join(v["sources_tried"]), "score": v["score"]}
+                                        "sources tried": ", ".join(v["sources_tried"]), "score": v["score"],
+                                        "re-used from": (f"{v['reused_from']['from_run']} ({v['reused_from']['reason']}"
+                                                         f", +{v['reused_from']['carried_forward_months']} mo)"
+                                                         if v.get("reused_from") else "")}
                                        for d, v in run.get("datasets", {}).items()]),
                          use_container_width=True, hide_index=True)
             if run["status"] == "pending_approval":
-                st.warning("Confidence below threshold – a human must approve before publishing.")
+                st.warning("Human approval required: "
+                           + (run.get("approval_reason") or "confidence below threshold") + ".")
                 from real_basket.flow.steps import publish_run, reject_run
 
                 reason = st.text_input("Reason (optional, stored in the audit trail)", key=f"why_{run['run_id']}")

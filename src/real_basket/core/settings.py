@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     RUN_TIMEOUT_S: int = 900              # wall-clock budget per run
     DEVIATION_THRESHOLD_PP: float = 1.0   # |essential - CPI| above this requires an investigation
     CONFIDENCE_THRESHOLD: float = 0.7     # below this a human must approve before publishing
+    # Re-using stored, validated data (planned re-use or fallback when fresh data is lost): at most this
+    # many trailing months may be carried forward with the last observed value (flagged in the report).
+    MAX_CARRY_FORWARD_MONTHS: int = 3
     # Probability that a demo "primary" source returns faulty data (outliers, gaps, missing
     # provenance) so the validation loop has something to do. Set 0 for clean demo data.
     DEMO_FAULT_RATE: float = 0.35

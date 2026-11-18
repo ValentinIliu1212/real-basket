@@ -31,18 +31,18 @@ def settings(monkeypatch):
     get_settings.cache_clear()
 
 
-def scripted(datasets=DATASETS, report_conf=0.9, replan=False, collect=True, validator_accepts=False,
+def scripted(reuse=(), report_conf=0.9, replan=False, collect=True, skip=(), validator_accepts=False,
              skip_investigation=False):
     def factory(ctx):
         ft = FlowTools(ctx)
 
         def planner():
             months = 30 if ctx.replan_request else 24
-            return ft.submit_plan(list(datasets), months, "test", 2, "scripted")
+            return ft.submit_plan(months, "test", 2, "scripted", list(reuse))
 
         def collector():
             for d in ctx.with_status(DatasetStatus.PENDING):
-                if not collect:
+                if not collect or d in skip:
                     continue
                 tried = ctx.tried_sources.get(d, [])
                 options = [s.name for s in sources_for(d) if s.available() and s.name not in tried]
@@ -72,9 +72,9 @@ def scripted(datasets=DATASETS, report_conf=0.9, replan=False, collect=True, val
     return factory
 
 
-def run(tmp_path, approver=auto_approver, **kw):
+def run(tmp_path, approver=auto_approver, end=END, **kw):
     return run_flow("test goal", Trigger.SCHEDULE, approver=approver, executors=scripted(**kw),
-                    store=DataStore(tmp_path), end=END)
+                    store=DataStore(tmp_path), end=end)
 
 
 def test_happy_path_is_published_and_reproducible(tmp_path, settings):
@@ -177,24 +177,75 @@ def test_investigation_is_enforced_for_large_deviation(tmp_path, settings):
     assert ctx.compute_confidence() <= ctx.report["confidence"]
 
 
-def test_scoped_plan_is_not_penalised_as_missing_data(tmp_path, settings):
-    """A rent-only question: unplanned categories are out of scope, not excluded data."""
+def test_partial_plan_is_amended_to_complete_basket(tmp_path, settings):
+    """The essential index is only defined for the complete basket: a planner cannot drop categories."""
     settings()
-    ctx = run(tmp_path, datasets=["rent", "cpi"])
-    cov = ctx.coverage()
-    assert cov == {"excluded": [], "out_of_scope": ["food", "energy", "mobility"]}
-    assert ctx.confidence == 0.9 and ctx.run_status == RunStatus.PUBLISHED
-    assert "out of scope: food, energy, mobility" in ctx.report["final_markdown"]
-    assert FlowTools(ctx).results()["excluded_categories"] == []
+    from real_basket.flow.context import RunContext
+
+    ctx = RunContext(trigger=Trigger.QUESTION, goal="rent only?", approver=deferred_approver,
+                     store=DataStore(tmp_path), end=END)
+    ctx.set_plan(RunPlan(datasets=["rent", "cpi"], months=24))
+    assert ctx.plan.datasets == list(DATASETS)
+    assert set(ctx.with_status(DatasetStatus.PENDING)) == set(DATASETS)
+    assert any(e["action"] == "plan_amended" for e in ctx.audit)
 
 
-def test_planned_but_lost_category_lowers_confidence(tmp_path, settings):
+def test_incomplete_basket_is_never_calculated(tmp_path, settings):
     settings()
     ctx = run(tmp_path)
-    before = ctx.compute_confidence()
-    ctx.results = {**ctx.results, "excluded_categories": ["food"]}     # food was planned, then lost
-    assert ctx.coverage()["excluded"] == ["food"]
-    assert ctx.compute_confidence() == round(before - 0.15, 2)
+    rows, weights = ctx.store.load_dataset(ctx.run_id)
+    with pytest.raises(ValueError, match="Incomplete basket"):
+        compute_results([r for r in rows if r.dataset != "food"], weights)
+    # a category with weight 0 is not required
+    w0 = {**weights, "food": 0.0}
+    assert compute_results([r for r in rows if r.dataset != "food"], w0)["excluded_categories"] == ["food"]
+
+
+def test_lost_dataset_without_stored_data_fails(tmp_path, settings):
+    settings()
+    ctx = run(tmp_path, skip=("food",))
+    assert ctx.status["food"] == DatasetStatus.EXCLUDED and ctx.results is None
+    assert "Incomplete basket" in ctx.calc_error and ctx.run_status == RunStatus.FAILED
+
+
+def test_planned_reuse_of_stored_data(tmp_path, settings):
+    settings()
+    first = run(tmp_path)
+    ctx = run(tmp_path, reuse=("rent",))
+    assert "rent" not in ctx.tried_sources                      # not fetched again
+    assert ctx.reused["rent"] == {"from_run": first.run_id, "reason": "planned", "carried_forward_months": 0,
+                                  "last_observed": "2025-12-01"}
+    assert ctx.results == first.results | {"dataset_hash": ctx.results["dataset_hash"]}
+    assert ctx.run_status == RunStatus.PUBLISHED and ctx.confidence == first.confidence
+
+
+def test_stale_stored_data_is_carried_forward_and_flagged(tmp_path, settings):
+    settings()
+    run(tmp_path, end=date(2025, 11, 1))
+    ctx = run(tmp_path, reuse=("rent",))
+    assert ctx.reused["rent"]["carried_forward_months"] == 1
+    assert any(r.source.endswith("(carried forward)") for r in ctx.accepted["rent"])
+    assert ctx.confidence == 0.85                               # 0.9 - 0.05 penalty
+    assert "carried forward" in ctx.report["final_markdown"]
+
+
+def test_too_old_stored_data_is_fetched_fresh(tmp_path, settings):
+    settings()
+    run(tmp_path, end=date(2025, 6, 1))
+    ctx = run(tmp_path, reuse=("rent",))
+    assert "rent" not in ctx.reused and ctx.tried_sources["rent"]
+    assert any(e["action"] == "reuse_unavailable" for e in ctx.audit)
+
+
+def test_lost_dataset_falls_back_to_stored_data_and_needs_human(tmp_path, settings):
+    settings()
+    first = run(tmp_path)
+    ctx = run(tmp_path, approver=deferred_approver, skip=("food",))
+    assert ctx.reused["food"]["reason"] == "fallback" and ctx.reused["food"]["from_run"] == first.run_id
+    assert ctx.results is not None
+    assert ctx.run_status == RunStatus.PENDING_APPROVAL and "food" in ctx.approval_reason
+    # fallback data is never used as the source for a later carry-forward
+    assert ctx.store.latest_validated("food", exclude_run="")[0] == first.run_id
 
 
 def test_audit_log_survives_parallel_tool_calls(tmp_path):

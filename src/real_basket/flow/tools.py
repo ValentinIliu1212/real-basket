@@ -6,7 +6,7 @@ from __future__ import annotations
 from strands import tool
 
 from real_basket.core.investigation import category_breakdown, item_changes, regional_rent_changes
-from real_basket.data.sources import SourceUnavailableError, get_source, sources_for
+from real_basket.data.sources import SourceUnavailableError, get_source, period_range, sources_for
 from real_basket.flow.context import RunContext
 from real_basket.schemas.flow import CATEGORY_DATASETS, DATASETS, DatasetStatus, Decision, RunPlan
 
@@ -27,6 +27,7 @@ class FlowTools:
             "datasets": {d: {"status": st.value, "attempts": c.attempts.get(d, 0),
                              "max_attempts": s.MAX_SOURCE_ATTEMPTS,
                              "sources_tried": c.tried_sources.get(d, []),
+                             "reused_from": c.reused.get(d),
                              "quality": c.reports[d].model_dump() if d in c.reports else None}
                          for d, st in c.status.items()},
             "replan_request": c.replan_request, "replans_used": c.replans, "max_replans": s.MAX_REPLANS,
@@ -39,7 +40,26 @@ class FlowTools:
         m = self.ctx.memory
         return {"source_reliability": {s.name: m.reliability(s.name, s.prior_reliability)
                                        for d in DATASETS for s in sources_for(d)},
-                "recent_runs": m.recent_runs()}
+                "recent_runs": m.recent_runs(),
+                "stored_data": self.stored_data()}
+
+    def stored_data(self) -> dict:
+        """Last validated data per dataset in the data store (candidates for `reuse`)."""
+        c = self.ctx
+        _, target = period_range(1, c.end)
+        out = {}
+        for d in DATASETS:
+            found = c.store.latest_validated(d, exclude_run=c.run_id)
+            if found is None:
+                out[d] = None
+                continue
+            run_id, rows = found
+            first, last = min(r.period for r in rows), max(r.period for r in rows)
+            ly, lm = int(last[:4]), int(last[5:7])
+            out[d] = {"from_run": run_id, "first_period": first, "last_period": last,
+                      "months_behind_target": (target.year * 12 + target.month) - (ly * 12 + lm),
+                      "max_carry_forward_months": c.settings.MAX_CARRY_FORWARD_MONTHS}
+        return out
 
     def list_sources(self, dataset: str = "") -> list[dict]:
         c = self.ctx
@@ -49,10 +69,10 @@ class FlowTools:
                  "tried_in_this_run": s.name in c.tried_sources.get(s.dataset, [])}
                 for d in datasets for s in sources_for(d)]
 
-    def submit_plan(self, datasets: list[str], months: int, focus: str, investigation_depth: int,
-                    rationale: str) -> str:
+    def submit_plan(self, months: int, focus: str, investigation_depth: int, rationale: str,
+                    reuse: list[str] | None = None) -> str:
         try:
-            plan = RunPlan(datasets=[d.lower() for d in datasets], months=months, focus=focus,
+            plan = RunPlan(reuse=[d.lower() for d in reuse or []], months=months, focus=focus,
                            investigation_depth=investigation_depth, rationale=rationale)
         except ValueError as exc:
             return f"Rejected: {exc}"
@@ -104,8 +124,7 @@ class FlowTools:
         c = self.ctx
         if not c.results:
             return {"error": f"No results: {c.calc_error}"}
-        cov = c.coverage()
-        return {**c.results, "excluded_categories": cov["excluded"], "out_of_scope_categories": cov["out_of_scope"],
+        return {**c.results, "reused_datasets": c.reused,
                 "deviation_threshold_pp": c.settings.DEVIATION_THRESHOLD_PP,
                 "investigation_required": abs(c.results["deviation_pp"]) > c.settings.DEVIATION_THRESHOLD_PP}
 
@@ -173,7 +192,8 @@ def strands_toolsets(ft: FlowTools) -> dict[str, list]:
 
     @tool
     def get_memory() -> dict:
-        """Memory from earlier runs: reliability per source (0-1) and summaries of recent runs."""
+        """Memory from earlier runs: reliability per source (0-1), summaries of recent runs and the last
+        validated data per dataset in the data store (stored_data: last_period, months_behind_target)."""
         return ft.memory()
 
     @tool
@@ -186,18 +206,20 @@ def strands_toolsets(ft: FlowTools) -> dict[str, list]:
         return ft.list_sources(dataset)
 
     @tool
-    def submit_plan(datasets: list[str], months: int, focus: str, investigation_depth: int,
-                    rationale: str) -> str:
-        """Submit the plan for this run.
+    def submit_plan(months: int, focus: str, investigation_depth: int, rationale: str,
+                    reuse: list[str] | None = None) -> str:
+        """Submit the plan for this run. The run always covers the complete basket (food, rent, energy,
+        mobility, cpi): the essential index is not defined for a subset.
 
         Args:
-            datasets: subset of ['food', 'rent', 'energy', 'mobility', 'cpi'] (cpi is always added)
-            months: months of history to collect (13-60; >= 13 needed for year-over-year rates)
-            focus: short description of what this run should focus on
+            months: months of history (13-60; >= 13 needed for year-over-year rates)
+            focus: what the analysis should focus on (e.g. a category the question is about)
             investigation_depth: max drill-down steps the analyst may use (0-4)
             rationale: why this plan fits the trigger, goal and memory
+            reuse: datasets to take from stored, validated data instead of fetching them again (only if
+                   stored_data is recent enough; missing trailing months are carried forward and flagged)
         """
-        return ft.submit_plan(datasets, months, focus, investigation_depth, rationale)
+        return ft.submit_plan(months, focus, investigation_depth, rationale, reuse)
 
     @tool
     def fetch_from_source(dataset: str, source: str) -> dict:
@@ -223,7 +245,7 @@ def strands_toolsets(ft: FlowTools) -> dict[str, list]:
     @tool
     def get_results() -> dict:
         """Deterministic calculation results: essential vs CPI YoY, deviation, per-category contribution
-        (contribution_pp) and gap to CPI (gap_pp), excluded categories, sources, demo flag."""
+        (contribution_pp) and gap to CPI (gap_pp), re-used stored datasets, sources, demo flag."""
         return ft.results()
 
     @tool

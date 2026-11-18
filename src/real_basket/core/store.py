@@ -76,6 +76,24 @@ class DataStore:
         data = json.loads((self.root / "runs" / run_id / "dataset.json").read_text(encoding="utf-8"))
         return [Row(**r) for r in data["rows"]], data["weights"]
 
+    def latest_validated(self, dataset: str, exclude_run: str = "") -> tuple[str, list[Row]] | None:
+        """Most recent rows of `dataset` that were fetched AND accepted in an earlier run (not rejected by
+        a human, not themselves re-used / carried forward, so carry-forward never chains)."""
+        for record in self.list_runs():
+            run_id = record.get("run_id", "")
+            info = (record.get("datasets") or {}).get(dataset) or {}
+            if (run_id == exclude_run or record.get("status") == "rejected" or info.get("status") != "accepted"
+                    or info.get("reused_from")):
+                continue
+            try:
+                rows, _ = self.load_dataset(run_id)
+            except (FileNotFoundError, json.JSONDecodeError, KeyError):
+                continue
+            rows = [r for r in rows if r.dataset == dataset]
+            if rows:
+                return run_id, rows
+        return None
+
     # --- audit ----------------------------------------------------------------------------------
     def append_audit(self, run_id: str, event: AuditEvent) -> None:
         # Strands executes parallel tool calls in threads: serialise writes so lines never interleave.

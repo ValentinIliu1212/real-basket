@@ -59,7 +59,11 @@ class Row(BaseModel):
 
 
 class RunPlan(BaseModel):
-    datasets: list[str]
+    # The essential index is only defined for the complete basket: set_plan always enforces all DATASETS.
+    datasets: list[str] = Field(default_factory=lambda: list(DATASETS))
+    # Datasets the planner wants to take from the last validated run instead of fetching them again
+    # (e.g. rents are only updated quarterly). Missing trailing months are carried forward (flagged).
+    reuse: list[str] = Field(default_factory=list)
     months: int = Field(ge=13, le=60)
     focus: str = ""
     investigation_depth: int = Field(default=2, ge=0)

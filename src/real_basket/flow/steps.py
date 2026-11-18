@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from real_basket.agents.prompts import DISCLAIMER
-from real_basket.core.engine import compute_results
+from real_basket.core.engine import compute_results, missing_for_basket
 from real_basket.core.store import DataStore
 from real_basket.core.validation import validate_rows
 from real_basket.flow.context import RunContext
@@ -71,6 +71,17 @@ def human_review(ctx: RunContext) -> str:
 
 
 def calculate(ctx: RunContext) -> str:
+    # Completeness rule: a dataset lost in this run (excluded / human-excluded) is replaced by the last
+    # validated stored data if possible (fallback -> human approval required); otherwise no index.
+    for d in ctx.with_status(DatasetStatus.EXCLUDED):
+        ctx.reuse_dataset(d, "fallback")
+    missing = missing_for_basket(ctx.with_status(DatasetStatus.ACCEPTED), ctx.weights)
+    if missing:
+        ctx.results = None
+        ctx.calc_error = (f"Incomplete basket: no validated data for {missing} (fresh fetch failed and no "
+                          "usable stored data). The essential index is only defined for the complete basket.")
+        ctx.log("calculation_engine", "refused_incomplete_basket", missing=missing)
+        return f"Calculation not possible: {ctx.calc_error}"
     rows = [r for d in ctx.with_status(DatasetStatus.ACCEPTED) for r in ctx.accepted[d]]
     try:
         h = ctx.store.save_dataset(ctx.run_id, rows, ctx.weights)
@@ -101,12 +112,14 @@ def final_markdown(ctx: RunContext) -> str:
     if r.get("demo_data", True):
         parts.append(DEMO_NOTICE)
     datasets = ", ".join(f"{d}: {s.value}" for d, s in ctx.status.items())
-    cov = ctx.coverage()
-    scope = (f" · index covers only: {', '.join(r.get('weights_used', {}))} (out of scope: "
-             f"{', '.join(cov['out_of_scope'])})" if cov["out_of_scope"] else "")
+    reused = "; ".join(
+        f"{d} from run {r['from_run']} ({r['reason']}"
+        + (f", last {r['carried_forward_months']} month(s) carried forward" if r["carried_forward_months"] else "")
+        + ")" for d, r in ctx.reused.items())
     parts.append("---\n**Provenance** · run `{}` · confidence {} · dataset hash `{}` · sources: {} · datasets: {}{}{}"
                  .format(ctx.run_id, ctx.compute_confidence(), r.get("dataset_hash", "-"),
-                         ", ".join(r.get("sources", [])) or "-", datasets, scope,
+                         ", ".join(r.get("sources", [])) or "-", datasets,
+                         f" · re-used stored data: {reused}" if reused else "",
                          f" · human overrides: {', '.join(ctx.human_overrides)}" if ctx.human_overrides else ""))
     parts.append(f"*{DISCLAIMER}*")
     return "\n\n".join(parts)
@@ -122,16 +135,20 @@ def release_gate(ctx: RunContext) -> str:
         ctx.approved, ctx.run_status = False, RunStatus.FAILED
         ctx.log("guardrail", "not_released", reason=ctx.calc_error)
         return "Not released: no results."
-    if ctx.confidence >= ctx.settings.CONFIDENCE_THRESHOLD:
+    fallbacks = ctx.fallbacks()
+    if ctx.confidence >= ctx.settings.CONFIDENCE_THRESHOLD and not fallbacks:
         ctx.approved = True
         ctx.log("guardrail", "auto_released", confidence=ctx.confidence)
         return f"Released automatically (confidence {ctx.confidence})."
-    answer = ctx.approver("publish", {"run_id": ctx.run_id, "confidence": ctx.confidence,
+    reason = (f"stored data replaces lost fresh data for {fallbacks}" if fallbacks
+              else f"confidence {ctx.confidence} below {ctx.settings.CONFIDENCE_THRESHOLD}")
+    ctx.approval_reason = reason
+    answer = ctx.approver("publish", {"run_id": ctx.run_id, "confidence": ctx.confidence, "reason": reason,
                                       "markdown": ctx.report["final_markdown"]})
     ctx.approved = answer
     ctx.run_status = {True: RunStatus.RUNNING, False: RunStatus.REJECTED}.get(answer, RunStatus.PENDING_APPROVAL)
-    ctx.log("human", "publish_review", confidence=ctx.confidence, decision=str(answer))
-    return f"Low confidence ({ctx.confidence}); human decision: {answer}."
+    ctx.log("human", "publish_review", confidence=ctx.confidence, reason=reason, decision=str(answer))
+    return f"Human approval required ({reason}); human decision: {answer}."
 
 
 def publish(ctx: RunContext) -> str:
