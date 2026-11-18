@@ -13,8 +13,38 @@ from __future__ import annotations
 from strands import tool
 
 from real_basket.core.index import category_indices, compare_with_cpi, essential_index
-from real_basket.data.demo_data import demo_cpi, demo_prices
-from real_basket.schemas.models import BasketWeights, Category
+from real_basket.data.demo_data import demo_cpi, demo_prices, demo_regional_rents
+from real_basket.schemas.models import BasketWeights, Category, RegionType
+
+
+@tool
+def fetch_regional_rents(region_type: str = "all", months: int = 13) -> list[dict]:
+    """Fetch rent per m2 (net cold, EUR) per German federal state ('bundesland') and/or for the
+    largest German cities ('stadt').
+
+    Args:
+        region_type: 'bundesland', 'stadt' or 'all'
+        months: months of history used for the year-over-year change (default 13)
+
+    Returns:
+        One entry per region with latest rent per m2, YoY change in percent and source.
+    """
+    rtype = None if region_type.lower() == "all" else RegionType(region_type.lower())
+    rents = demo_regional_rents(months=months, region_type=rtype)
+    by_region: dict[tuple[str, str], list] = {}
+    for p in rents:
+        by_region.setdefault((p.region_type.value, p.region), []).append(p)
+    result = []
+    for (rt, region), pts in by_region.items():
+        pts.sort(key=lambda p: p.period)
+        first, last = pts[0], pts[-1]
+        result.append({
+            "region_type": rt, "region": region, "period": str(last.period),
+            "rent_eur_per_m2": round(last.price, 2),
+            "change_pct": round((last.price / first.price - 1) * 100, 2),
+            "change_since": str(first.period), "source": last.source,
+        })
+    return sorted(result, key=lambda r: -r["rent_eur_per_m2"])
 
 
 @tool

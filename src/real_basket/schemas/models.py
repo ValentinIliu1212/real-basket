@@ -11,6 +11,12 @@ class Category(str, Enum):
     MOBILITY = "mobility"
 
 
+class RegionType(str, Enum):
+    NATIONAL = "national"
+    STATE = "bundesland"
+    CITY = "stadt"
+
+
 class PricePoint(BaseModel):
     category: Category
     item: str = Field(description="Concrete good/service, e.g. 'bread 1kg', 'rent per m2', 'electricity kWh'")
@@ -18,6 +24,8 @@ class PricePoint(BaseModel):
     price: float = Field(gt=0)
     unit: str = "EUR"
     source: str = Field(default="demo", description="Origin of the price (URL, API name, 'demo')")
+    region: str = Field(default="Deutschland", description="Region the price refers to (state or city)")
+    region_type: RegionType = RegionType.NATIONAL
 
 
 class BasketWeights(BaseModel):

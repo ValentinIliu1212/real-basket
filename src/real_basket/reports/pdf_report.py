@@ -14,11 +14,11 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from real_basket.agents.prompts import DISCLAIMER
-from real_basket.data.demo_data import demo_cpi, demo_prices
-from real_basket.schemas.models import Category, CpiPoint, PricePoint
+from real_basket.data.demo_data import demo_cpi, demo_prices, demo_regional_rents
+from real_basket.schemas.models import Category, CpiPoint, PricePoint, RegionType
 
 MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
 CATEGORY_DE = {
@@ -42,7 +42,7 @@ def format_eur(value: float) -> str:
 
 
 def _build_year_pdf(year: int, prices: list[PricePoint], cpi: list[CpiPoint], out_file: Path,
-                    is_demo: bool) -> None:
+                    is_demo: bool, regional_rents: list[PricePoint] | None = None) -> None:
     styles = getSampleStyleSheet()
     months = sorted({p.period for p in prices})
     header = ["Kategorie", "Position"] + [MONTHS_DE[m.month - 1] for m in months]
@@ -64,8 +64,8 @@ def _build_year_pdf(year: int, prices: list[PricePoint], cpi: list[CpiPoint], ou
     month_w = (landscape(A4)[0] - 2 * cm - first_col_w - second_col_w) / max(len(months), 1)
     col_widths = [first_col_w, second_col_w] + [month_w] * len(months)
 
-    def styled(data: list[list[str]], header_color: colors.Color) -> Table:
-        t = Table(data, colWidths=col_widths, repeatRows=1)
+    def styled(data: list[list[str]], header_color: colors.Color, widths: list[float] | None = None) -> Table:
+        t = Table(data, colWidths=widths or col_widths, repeatRows=1)
         t.setStyle(TableStyle([
             ("FONT", (0, 0), (-1, -1), "Helvetica", 7.5),
             ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8),
@@ -95,6 +95,38 @@ def _build_year_pdf(year: int, prices: list[PricePoint], cpi: list[CpiPoint], ou
         Paragraph(DISCLAIMER, styles["Italic"]),
     ]
 
+    # --- Miete regional: Bundesländer und größte Städte ---------------------------------------
+    reg_first_w, reg_avg_w = 4.0 * cm, 2.2 * cm
+    reg_month_w = (landscape(A4)[0] - 2 * cm - reg_first_w - reg_avg_w) / max(len(months), 1)
+    reg_widths = [reg_first_w, reg_avg_w] + [reg_month_w] * len(months)
+    for rtype, title in ((RegionType.STATE, "Miete pro m² (nettokalt) nach Bundesland"),
+                         (RegionType.CITY, "Miete pro m² (nettokalt) in den größten Städten")):
+        regional = [p for p in (regional_rents or []) if p.region_type == rtype]
+        if not regional:
+            continue
+        by_region: dict[str, dict[date, float]] = defaultdict(dict)
+        for p in regional:
+            by_region[p.region][p.period] = p.price
+        reg_header = ["Region", "Ø Jahr"] + [MONTHS_DE[m.month - 1] for m in months]
+        reg_rows = [reg_header]
+        # sortiert nach letztem Monatswert, teuerste Region zuerst
+        for region, values in sorted(by_region.items(), key=lambda kv: -kv[1].get(months[-1], 0)):
+            vals = [values[m] for m in months if m in values]
+            reg_rows.append([region, format_eur(sum(vals) / len(vals))]
+                            + [format_eur(values[m]) if m in values else "–" for m in months])
+        story += [
+            PageBreak(),
+            Paragraph(f"{title} – {year}", styles["Heading2"]),
+            Paragraph(f"Zeitraum: {period_txt} · Angaben in EUR pro m² Wohnfläche, Angebotsmieten",
+                      styles["Normal"]),
+            Spacer(1, 0.3 * cm),
+            styled(reg_rows, colors.HexColor("#0072BC"), reg_widths),
+        ]
+        if is_demo:
+            story += [Spacer(1, 0.3 * cm),
+                      Paragraph("<font color='#C0392B'>Demo-Daten (grobe Größenordnung), keine amtlichen "
+                                "Werte.</font>", styles["Normal"])]
+
     doc = SimpleDocTemplate(str(out_file), pagesize=landscape(A4), leftMargin=1 * cm, rightMargin=1 * cm,
                             topMargin=1 * cm, bottomMargin=1 * cm,
                             title=f"RealBasket Preise {year}", author="RealBasket")
@@ -110,6 +142,7 @@ def generate_yearly_price_reports(output_dir: str | Path = "reports", months: in
     # TODO: bei USE_DEMO_DATA=false echte Collector verwenden
     prices = demo_prices(start=start, months=months)
     cpi = demo_cpi(start=start, months=months)
+    regional_rents = demo_regional_rents(start=start, months=months)
     is_demo = True
 
     out = Path(output_dir)
@@ -118,7 +151,8 @@ def generate_yearly_price_reports(output_dir: str | Path = "reports", months: in
     for year in sorted({p.period.year for p in prices}):
         out_file = out / f"realbasket_preise_{year}.pdf"
         _build_year_pdf(year, [p for p in prices if p.period.year == year],
-                        [c for c in cpi if c.period.year == year], out_file, is_demo)
+                        [c for c in cpi if c.period.year == year], out_file, is_demo,
+                        [r for r in regional_rents if r.period.year == year])
         files.append(out_file)
     return files
 

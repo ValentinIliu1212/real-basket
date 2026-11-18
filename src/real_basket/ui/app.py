@@ -1,12 +1,13 @@
 """Streamlit UI. Run with: poetry run streamlit run src/real_basket/ui/app.py"""
 
+import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 from real_basket.agents.prompts import DISCLAIMER
 from real_basket.core.index import category_indices, compare_with_cpi, essential_index
-from real_basket.data.demo_data import demo_cpi, demo_prices
-from real_basket.schemas.models import BasketWeights, Category
+from real_basket.data.demo_data import demo_cpi, demo_prices, demo_regional_rents
+from real_basket.schemas.models import BasketWeights, Category, RegionType
 
 st.set_page_config(page_title="RealBasket", page_icon="🧺", layout="wide")
 st.title("🧺 RealBasket")
@@ -39,7 +40,8 @@ c1.metric("Essential inflation (YoY)", f"{latest['essential_yoy_pct']:.2f} %")
 c2.metric("Official CPI (YoY)", f"{latest['cpi_yoy_pct']:.2f} %")
 c3.metric("Deviation", f"{latest['deviation_pp']:+.2f} pp")
 
-tab_idx, tab_yoy, tab_cat, tab_agent = st.tabs(["Index", "YoY rates", "Categories", "🤖 Ask the agent"])
+tab_idx, tab_yoy, tab_cat, tab_rent, tab_agent = st.tabs(
+    ["Index", "YoY rates", "Categories", "🏠 Miete regional", "🤖 Ask the agent"])
 with tab_idx:
     st.plotly_chart(px.line(comparison[["essential_index", "cpi_index"]], labels={"value": "Index (base=100)"}),
                     use_container_width=True)
@@ -49,6 +51,30 @@ with tab_yoy:
 with tab_cat:
     st.plotly_chart(px.line(category_indices(prices), labels={"value": "Index (base=100)"}),
                     use_container_width=True)
+
+with tab_rent:
+    level = st.radio("Ebene", ["Bundesländer", "Größte Städte"], horizontal=True)
+    rtype = RegionType.STATE if level == "Bundesländer" else RegionType.CITY
+    rent_df = pd.DataFrame([p.model_dump() for p in demo_regional_rents(region_type=rtype)])
+    rent_df["period"] = pd.to_datetime(rent_df["period"])
+    last, prev = rent_df["period"].max(), rent_df["period"].max() - pd.DateOffset(months=12)
+    latest_rent = rent_df[rent_df["period"] == last].set_index("region")["price"]
+    prev_rent = rent_df[rent_df["period"] == prev].set_index("region")["price"]
+    summary = pd.DataFrame({
+        "Miete €/m²": latest_rent.round(2),
+        "Veränderung ggü. Vorjahr %": ((latest_rent / prev_rent - 1) * 100).round(2),
+    }).sort_values("Miete €/m²", ascending=False)
+
+    st.caption(f"Angebotsmiete nettokalt pro m², Stand {last:%m/%Y} · Demo-Daten (grobe Größenordnung)")
+    st.plotly_chart(px.bar(summary, x=summary.index, y="Miete €/m²", color="Veränderung ggü. Vorjahr %",
+                           color_continuous_scale="Reds", labels={"x": ""}), use_container_width=True)
+    col_tbl, col_line = st.columns([1, 2])
+    col_tbl.dataframe(summary, use_container_width=True)
+    selected = col_line.multiselect("Regionen vergleichen", list(summary.index), default=list(summary.index[:3]))
+    if selected:
+        col_line.plotly_chart(
+            px.line(rent_df[rent_df["region"].isin(selected)], x="period", y="price", color="region",
+                    labels={"price": "€/m²", "period": ""}), use_container_width=True)
 
 with tab_agent:
     if "messages" not in st.session_state:

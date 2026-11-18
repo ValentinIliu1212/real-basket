@@ -21,6 +21,7 @@ Workflow:
 2. Use `calculate_essential_vs_cpi` to compute the weighted essential index and the CPI comparison.
 3. Explain the result in plain language: is the burden from basic living costs rising above or below
    official inflation, by how many percentage points, and which category drives the difference.
+4. For questions about rents in specific federal states (Bundesländer) or cities, use `fetch_regional_rents`.
 
 Rules:
 - Base all numbers on tool results only.

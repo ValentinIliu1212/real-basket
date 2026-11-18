@@ -58,6 +58,7 @@ Replace them with real collectors (one module per source under `src/real_basket/
 | CPI (official) | Destatis GENESIS API, table `61111-0002` (token in `.env`: `DESTATIS_GENESIS_TOKEN`), Eurostat HICP |
 | Food | Destatis sub-indices (food 01.1), supermarket price APIs / web scraping |
 | Rent | Destatis rent index, Mietspiegel data, rental portals |
+| Rent per state / largest cities | BBSR Angebotsmieten (Kreise/Städte), Destatis Mietenindex per Bundesland, empirica/immowelt/ImmoScout24 price atlases |
 | Energy | Bundesnetzagentur, energy tariff comparison portals, Destatis energy sub-indices |
 | Mobility | Tankerkoenig fuel price API, public transport tariffs (Deutschlandticket) |
 
