@@ -96,6 +96,17 @@ poetry run pytest
 
 > Windows: if `poetry` is not on PATH, use `& "$env:APPDATA\Python\Scripts\poetry.exe"` instead.
 
+### Eclipse (optional)
+
+The repo contains an Eclipse `.project` file (UTF-8 encoding preset).
+
+1. **File → Import… → General → Existing Projects into Workspace**, select the repo folder, leave
+   "Copy projects into workspace" unchecked.
+2. Install **PyDev** (Eclipse Marketplace), add the Poetry virtualenv interpreter
+   (`poetry env info --path` → `Scripts\python.exe`) under **Preferences → PyDev → Interpreters**.
+3. Right-click the project → **PyDev → Set as PyDev Project**, add `/real-basket/src` to the PYTHONPATH.
+4. Start Streamlit from a terminal (no Eclipse launcher).
+
 ## Usage
 
 ```powershell
@@ -198,11 +209,14 @@ objects, so the calculations stay unchanged.
 - [ ] Scheduler for the monthly `schedule` trigger and real price-alert triggers
 - [ ] Web search / fetch tools for source discovery; optional: expose collectors as MCP tools
 - [ ] Add session management (Strands `FileSessionManager`) for chat history
+- [ ] Use Strands' built-in interrupt / pause-for-approval instead of the custom approval mechanism
+- [ ] Calibrate the confidence score (a live run published at exactly the 0.7 threshold without human approval)
 
 ### 4. UI & reports
 - [ ] Align the dashboard period with the PDF period (dashboard currently shows 24 months from 01/2024)
 - [ ] PDF download buttons in the dashboard
 - [ ] Replace deprecated `use_container_width` with `width="stretch"` (Streamlit ≥ 1.50)
+- [ ] Add the 🔄 Monitoring runs tab to an automated UI test (Streamlit `AppTest`)
 
 ### 5. Engineering
 - [ ] CI pipeline (ruff + pytest)
@@ -215,4 +229,5 @@ objects, so the calculations stay unchanged.
 3. Run `poetry run ruff check .` and `poetry run pytest` before pushing.
 4. Open a merge/pull request against `main`.
 
-Never commit `.env` or API keys. Generated PDFs (`/reports`) are git-ignored.
+Never commit `.env` or API keys. Generated PDFs (`/reports`) and monitoring runs (`/data_store`) are
+git-ignored, so each contributor has their own local run history.
