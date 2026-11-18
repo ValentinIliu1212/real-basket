@@ -24,6 +24,8 @@ baskets of goods and different weightings.
 
 ## Architecture
 
+> Target architecture (non-deterministic agentic process): see [docs/process-redesign.md](docs/process-redesign.md).
+
 ```
 Streamlit UI / CLI ──► Orchestrator Agent (Strands, "RealBasket Analyst")
                          ├─ collect_category_prices ──► Collector Agent ──► fetch_prices (food/rent/energy/mobility)
