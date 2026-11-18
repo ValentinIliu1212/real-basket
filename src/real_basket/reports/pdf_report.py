@@ -10,6 +10,7 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
@@ -17,6 +18,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from real_basket.agents.prompts import DISCLAIMER
+from real_basket.core.index import compare_with_cpi, essential_index
 from real_basket.core.income import DEFAULT_FLAT_SIZE_M2, average_salaries, rent_burden
 from real_basket.core.rents import TOTAL_COL, average_rents, overall_average
 from real_basket.data.demo_data import demo_cpi, demo_net_salaries, demo_prices, demo_regional_rents
@@ -294,15 +296,125 @@ def generate_salary_report(output_dir: str | Path = "reports", months: int = 60,
     return out_file
 
 
+def _year_month_table(values: dict[date, float], years: list[int], fmt) -> Table:
+    """Jahr × Monat Matrix (Jan–Dez) + Spalte 'Ø Jahr'."""
+    header = ["Jahr"] + MONTHS_DE + ["Ø Jahr"]
+    rows = [header]
+    for y in years:
+        vals = [values.get(date(y, m, 1)) for m in range(1, 13)]
+        present = [v for v in vals if v is not None]
+        rows.append([str(y)] + [fmt(v) if v is not None else "–" for v in vals]
+                    + [fmt(sum(present) / len(present)) if present else "–"])
+    first_w = 1.8 * cm
+    other_w = (landscape(A4)[0] - 2 * cm - first_w) / 13
+    t = Table(rows, colWidths=[first_w] + [other_w] * 13, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 8),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8.5),
+        ("FONT", (-1, 1), (-1, -1), "Helvetica-Bold", 8),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#5A6772")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F6FA")]),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
+    ]))
+    return t
+
+
+def generate_cpi_report(output_dir: str | Path = "reports", months: int = 60, end: date | None = None) -> Path:
+    """PDF: Verbraucherpreisindex (VPI) der letzten `months` Monate – Indexwerte, Inflationsrate ggü.
+    Vorjahresmonat und Jahresvergleich mit dem Grundbedarf-Index."""
+    end = (end or date.today()).replace(day=1)
+    start = _shift_months(end, -(months - 1))
+    ext_start = _shift_months(start, -12)  # 12 Monate Vorlauf für Vorjahresvergleich
+    # TODO: echte Quelle (Destatis GENESIS 61111-0002) bei USE_DEMO_DATA=false
+    cpi = demo_cpi(start=ext_start, months=months + 12)
+    comparison = compare_with_cpi(essential_index(demo_prices(start=ext_start, months=months + 12)), cpi)
+    comparison = comparison[comparison.index >= pd.Timestamp(start)]
+
+    cpi_values = {c.period: c.index_value for c in cpi if c.period >= start}
+    cpi_yoy = {ts.date(): v for ts, v in comparison["cpi_yoy_pct"].items()}
+    years = sorted({p.year for p in cpi_values})
+    styles = getSampleStyleSheet()
+    period_txt = f"{MONTHS_DE[start.month - 1]} {start.year} – {MONTHS_DE[end.month - 1]} {end.year}"
+
+    # Jahresvergleich VPI vs. Grundbedarf
+    comparison = comparison.assign(year=comparison.index.year)
+    yearly = comparison.groupby("year").agg(
+        cpi=("cpi_yoy_pct", "mean"), essential=("essential_yoy_pct", "mean"),
+        deviation=("deviation_pp", "mean"), n=("cpi_yoy_pct", "size"))
+    cmp_rows = [["Jahr", "Monate", "Ø VPI-Inflation", "Ø Grundbedarf-Inflation", "Abweichung"]]
+    for y, r in yearly.iterrows():
+        cmp_rows.append([str(y), str(int(r["n"])), _format_pct(r["cpi"]), _format_pct(r["essential"]),
+                         f"{r['deviation']:+.1f} pp".replace(".", ",")])
+    cmp_rows.append(["Gesamt", str(len(comparison)), _format_pct(comparison["cpi_yoy_pct"].mean()),
+                     _format_pct(comparison["essential_yoy_pct"].mean()),
+                     f"{comparison['deviation_pp'].mean():+.1f} pp".replace(".", ",")])
+    cmp_table = Table(cmp_rows, colWidths=[3 * cm, 2.5 * cm, 4.5 * cm, 5.5 * cm, 4 * cm], hAlign="LEFT")
+    cmp_table.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+        ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 9),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0072BC")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F2F6FA")]),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#0072BC")),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
+    ]))
+
+    story = [
+        Paragraph("RealBasket – Verbraucherpreisindex (VPI)", styles["Title"]),
+        Paragraph(f"Zeitraum: {period_txt} ({months} Monate) · Basis 2020 = 100 · "
+                  f"Erstellt am {date.today():%d.%m.%Y}", styles["Normal"]),
+        Paragraph("<font color='#C0392B'><b>Hinweis: Synthetische Demo-Daten (an grobe historische "
+                  "Jahresraten angelehnt) – keine amtlichen Werte von Destatis.</b></font>", styles["Normal"]),
+        Spacer(1, 0.4 * cm),
+        Paragraph("VPI-Indexwerte (2020 = 100)", styles["Heading2"]),
+        _year_month_table(cpi_values, years, lambda v: f"{v:.1f}".replace(".", ",")),
+        Spacer(1, 0.4 * cm),
+        Paragraph("Inflationsrate: Veränderung ggü. Vorjahresmonat in %", styles["Heading2"]),
+        _year_month_table(cpi_yoy, years, _format_pct),
+        PageBreak(),
+        Paragraph("Jahresvergleich: offizielle Inflation (VPI) vs. Grundbedarf-Index", styles["Heading2"]),
+        Paragraph("Grundbedarf-Index: Lebensmittel 30 %, Miete 40 %, Energie 15 %, Mobilität 15 %. "
+                  "Werte = Ø der monatlichen Veränderungsraten ggü. Vorjahresmonat.", styles["Normal"]),
+        Spacer(1, 0.3 * cm),
+        cmp_table,
+        Spacer(1, 0.5 * cm),
+        Paragraph(DISCLAIMER, styles["Italic"]),
+        Paragraph("„Ø Jahr“ = Mittelwert der verfügbaren Monate (Rand-Jahre ggf. unvollständig). Die amtliche "
+                  "Jahresinflationsrate wird von Destatis aus den Jahresdurchschnitten des Index berechnet.",
+                  styles["Italic"]),
+    ]
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    out_file = out / "realbasket_verbraucherpreisindex.pdf"
+    SimpleDocTemplate(str(out_file), pagesize=landscape(A4), leftMargin=1 * cm, rightMargin=1 * cm,
+                      topMargin=1 * cm, bottomMargin=1 * cm, title="RealBasket Verbraucherpreisindex",
+                      author="RealBasket").build(story)
+    return out_file
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Ein PDF pro Jahr mit Preisen der letzten N Monate (EUR).")
+    parser = argparse.ArgumentParser(description="PDF-Berichte (Preise, Miete, Nettogehalt, VPI) der letzten N Monate.")
     parser.add_argument("--months", type=int, default=60)
     parser.add_argument("--out", default="reports")
     args = parser.parse_args()
-    for f in generate_yearly_price_reports(args.out, args.months):
-        print(f"PDF erstellt: {f.resolve()}")
-    print(f"PDF erstellt: {generate_average_rent_report(args.out, args.months).resolve()}")
-    print(f"PDF erstellt: {generate_salary_report(args.out, args.months).resolve()}")
+
+    jobs = [
+        ("Jahres-PDFs", lambda: generate_yearly_price_reports(args.out, args.months)),
+        ("Ø Miete", lambda: [generate_average_rent_report(args.out, args.months)]),
+        ("Ø Nettogehalt", lambda: [generate_salary_report(args.out, args.months)]),
+        ("Verbraucherpreisindex", lambda: [generate_cpi_report(args.out, args.months)]),
+    ]
+    for name, job in jobs:
+        try:
+            for f in job():
+                print(f"PDF erstellt: {f.resolve()}")
+        except PermissionError as exc:
+            print(f"ÜBERSPRUNGEN ({name}): Datei ist gesperrt – bitte im PDF-Viewer schließen. ({exc.filename})")
 
 
 if __name__ == "__main__":

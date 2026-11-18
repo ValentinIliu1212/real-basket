@@ -60,8 +60,12 @@ CITY_RENTS: dict[str, tuple[float, float]] = {
     "Duisburg": (6.90, 0.0030),
 }
 
-_CPI_BASE = 117.0
-_CPI_MONTHLY_GROWTH = 0.0018  # ~2.2 % p.a.
+# Demo CPI: base Jan 2020 = 100, roughly realistic annual inflation rates (demo values, not official)
+_CPI_ANCHOR = date(2020, 1, 1)
+_CPI_ANNUAL_RATES: dict[int, float] = {
+    2020: 0.005, 2021: 0.031, 2022: 0.069, 2023: 0.059, 2024: 0.022, 2025: 0.021, 2026: 0.020,
+}
+_CPI_DEFAULT_RATE = 0.02
 
 # Approximate average monthly NET salary (EUR, full-time, tax class I) at start of the series
 # + monthly nominal growth rate. Derived roughly from Destatis gross earnings - demo values only.
@@ -125,5 +129,23 @@ def demo_regional_rents(start: date = date(2024, 1, 1), months: int = 24,
 
 
 def demo_cpi(start: date = date(2024, 1, 1), months: int = 24) -> list[CpiPoint]:
-    return [CpiPoint(period=p, index_value=round(_CPI_BASE * (1 + _CPI_MONTHLY_GROWTH) ** i, 2))
-            for i, p in enumerate(_months(start, months))]
+    """Demo CPI anchored at Jan 2020 = 100 (independent of `start`, so all reports are consistent)."""
+    return [CpiPoint(period=p, index_value=round(_cpi_value(p), 1)) for p in _months(start, months)]
+
+
+def _cpi_value(period: date) -> float:
+    value, current = 100.0, _CPI_ANCHOR
+    step = 1 if period >= _CPI_ANCHOR else -1
+    while current != period:
+        if step == 1:
+            current = _months(current, 2)[1]
+            value *= _cpi_monthly_growth(current.year)
+        else:
+            value /= _cpi_monthly_growth(current.year)
+            current = date(current.year - (current.month == 1), (current.month - 2) % 12 + 1, 1)
+    return value
+
+
+def _cpi_monthly_growth(year: int) -> float:
+    annual = _CPI_ANNUAL_RATES.get(year, _CPI_DEFAULT_RATE)
+    return (1 + annual) ** (1 / 12)

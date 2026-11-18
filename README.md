@@ -95,6 +95,7 @@ poetry run real-basket-pdf --months 60 --out reports
 | `realbasket_preise_<year>.pdf` | Monthly prices (EUR) of all basket items + CPI; rent per state and per city with Ø row (3 pages) |
 | `realbasket_miete_durchschnitt.pdf` | Ø rent per state and per city, per year and total |
 | `realbasket_nettogehalt_durchschnitt.pdf` | Ø net salary per state per year and total; rent burden (70 m²) per year |
+| `realbasket_verbraucherpreisindex.pdf` | CPI (2020 = 100) per month, inflation rate vs. previous year's month, yearly comparison CPI vs. essential index |
 
 ## Methodology
 
