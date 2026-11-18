@@ -6,8 +6,9 @@ import streamlit as st
 
 from real_basket.agents.prompts import DISCLAIMER
 from real_basket.core.index import category_indices, compare_with_cpi, essential_index
+from real_basket.core.income import DEFAULT_FLAT_SIZE_M2, average_salaries, rent_burden
 from real_basket.core.rents import TOTAL_COL, average_rents, overall_average
-from real_basket.data.demo_data import demo_cpi, demo_prices, demo_regional_rents
+from real_basket.data.demo_data import demo_cpi, demo_net_salaries, demo_prices, demo_regional_rents
 from real_basket.schemas.models import BasketWeights, Category, RegionType
 
 st.set_page_config(page_title="RealBasket", page_icon="🧺", layout="wide")
@@ -41,8 +42,8 @@ c1.metric("Essential inflation (YoY)", f"{latest['essential_yoy_pct']:.2f} %")
 c2.metric("Official CPI (YoY)", f"{latest['cpi_yoy_pct']:.2f} %")
 c3.metric("Deviation", f"{latest['deviation_pp']:+.2f} pp")
 
-tab_idx, tab_yoy, tab_cat, tab_rent, tab_agent = st.tabs(
-    ["Index", "YoY rates", "Categories", "🏠 Miete regional", "🤖 Ask the agent"])
+tab_idx, tab_yoy, tab_cat, tab_rent, tab_income, tab_agent = st.tabs(
+    ["Index", "YoY rates", "Categories", "🏠 Miete regional", "💶 Nettogehalt", "🤖 Ask the agent"])
 with tab_idx:
     st.plotly_chart(px.line(comparison[["essential_index", "cpi_index"]], labels={"value": "Index (base=100)"}),
                     use_container_width=True)
@@ -92,6 +93,39 @@ with tab_rent:
     avg_display = avg_table.copy()
     avg_display.loc["Ø alle Regionen"] = overall_average(avg_table)
     st.dataframe(avg_display.style.format("{:.2f} €"), use_container_width=True)
+
+with tab_income:
+    incomes = demo_net_salaries()
+    state_rents = demo_regional_rents(region_type=RegionType.STATE)
+    salary_tbl = average_salaries(incomes)
+    flat = st.slider("Wohnfläche für Mietbelastung (m²)", 30, 120, DEFAULT_FLAT_SIZE_M2, 5)
+    burden_tbl = rent_burden(state_rents, incomes, flat)
+
+    inc_first, inc_last = min(i.period for i in incomes), max(i.period for i in incomes)
+    st.caption(f"Ø monatliches Nettogehalt (Vollzeit) pro Bundesland, {inc_first:%m/%Y}–{inc_last:%m/%Y} · "
+               "Demo-Daten (grobe Größenordnung)")
+    i1, i2, i3 = st.columns(3)
+    i1.metric("Ø Nettogehalt alle Bundesländer", f"{salary_tbl[TOTAL_COL].mean():,.0f} €".replace(",", "."))
+    i2.metric("Spanne Nettogehalt",
+              f"{salary_tbl[TOTAL_COL].min():,.0f} – {salary_tbl[TOTAL_COL].max():,.0f} €".replace(",", "."))
+    i3.metric(f"Ø Mietbelastung ({flat} m²)", f"{burden_tbl[TOTAL_COL].mean():.1f} %")
+
+    col_sal, col_bur = st.columns(2)
+    col_sal.plotly_chart(px.bar(salary_tbl, x=salary_tbl.index, y=TOTAL_COL, title="Ø Nettogehalt (€/Monat)",
+                                labels={"x": "", TOTAL_COL: "€"}), use_container_width=True)
+    col_bur.plotly_chart(px.bar(burden_tbl, x=burden_tbl.index, y=TOTAL_COL, color=TOTAL_COL,
+                                color_continuous_scale="Reds",
+                                title=f"Mietbelastung: Miete {flat} m² in % vom Nettogehalt",
+                                labels={"x": "", TOTAL_COL: "%"}), use_container_width=True)
+
+    st.subheader("Ø Nettogehalt pro Jahr")
+    sal_display = salary_tbl.copy()
+    sal_display.loc["Ø alle Bundesländer"] = salary_tbl.mean(axis=0)
+    st.dataframe(sal_display.style.format("{:,.0f} €"), use_container_width=True)
+    st.subheader(f"Mietbelastung pro Jahr ({flat} m²)")
+    bur_display = burden_tbl.copy()
+    bur_display.loc["Ø alle Bundesländer"] = burden_tbl.mean(axis=0)
+    st.dataframe(bur_display.style.format("{:.1f} %"), use_container_width=True)
 
 with tab_agent:
     if "messages" not in st.session_state:

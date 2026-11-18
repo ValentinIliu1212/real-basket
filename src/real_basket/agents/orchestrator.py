@@ -8,6 +8,7 @@ from strands.models.openai import OpenAIModel
 from real_basket.agents.prompts import COLLECTOR_PROMPT, ORCHESTRATOR_PROMPT
 from real_basket.agents.tools import (
     calculate_essential_vs_cpi,
+    fetch_net_salaries,
     fetch_official_cpi,
     fetch_prices,
     fetch_regional_rents,
@@ -44,6 +45,7 @@ def create_orchestrator() -> Agent:
         name=settings.AGENT_NAME,
         system_prompt=ORCHESTRATOR_PROMPT,
         model=create_model(),
-        tools=[collect_category_prices, fetch_official_cpi, calculate_essential_vs_cpi, fetch_regional_rents],
+        tools=[collect_category_prices, fetch_official_cpi, calculate_essential_vs_cpi, fetch_regional_rents,
+               fetch_net_salaries],
         callback_handler=None,
     )

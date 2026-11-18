@@ -36,6 +36,7 @@ poetry run streamlit run src/real_basket/ui/app.py
 poetry run real-basket-cli "Are basic living costs rising faster than official inflation?"
 poetry run real-basket-pdf --months 60 --out reports   # one PDF per year with monthly prices in EUR
                                                        # + realbasket_miete_durchschnitt.pdf (Ø rent per state/city)
+                                                       # + realbasket_nettogehalt_durchschnitt.pdf (Ø net salary + rent burden)
 ```
 
 ## Methodology
@@ -60,6 +61,7 @@ Replace them with real collectors (one module per source under `src/real_basket/
 | Food | Destatis sub-indices (food 01.1), supermarket price APIs / web scraping |
 | Rent | Destatis rent index, Mietspiegel data, rental portals |
 | Rent per state / largest cities | BBSR Angebotsmieten (Kreise/Städte), Destatis Mietenindex per Bundesland, empirica/immowelt/ImmoScout24 price atlases |
+| Net salary per state | Destatis Verdiensterhebung (gross, per Bundesland) + net calculation, BA Entgeltatlas, VGR der Länder (verfügbares Einkommen) |
 | Energy | Bundesnetzagentur, energy tariff comparison portals, Destatis energy sub-indices |
 | Mobility | Tankerkoenig fuel price API, public transport tariffs (Deutschlandticket) |
 

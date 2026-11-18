@@ -22,6 +22,7 @@ Workflow:
 3. Explain the result in plain language: is the burden from basic living costs rising above or below
    official inflation, by how many percentage points, and which category drives the difference.
 4. For questions about rents in specific federal states (Bundesländer) or cities, use `fetch_regional_rents`.
+5. For questions about net salaries per federal state or affordability / rent burden, use `fetch_net_salaries`.
 
 Rules:
 - Base all numbers on tool results only.

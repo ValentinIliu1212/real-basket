@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from real_basket.schemas.models import Category, CpiPoint, PricePoint, RegionType
+from real_basket.schemas.models import Category, CpiPoint, IncomePoint, PricePoint, RegionType
 
 # item -> (category, base price EUR, monthly growth rate)
 _DEMO_ITEMS: dict[str, tuple[Category, float, float]] = {
@@ -62,6 +62,34 @@ CITY_RENTS: dict[str, tuple[float, float]] = {
 
 _CPI_BASE = 117.0
 _CPI_MONTHLY_GROWTH = 0.0018  # ~2.2 % p.a.
+
+# Approximate average monthly NET salary (EUR, full-time, tax class I) at start of the series
+# + monthly nominal growth rate. Derived roughly from Destatis gross earnings - demo values only.
+STATE_NET_SALARIES: dict[str, tuple[float, float]] = {
+    "Baden-Württemberg": (2850.0, 0.0034),
+    "Bayern": (2800.0, 0.0035),
+    "Berlin": (2700.0, 0.0038),
+    "Brandenburg": (2250.0, 0.0042),
+    "Bremen": (2700.0, 0.0033),
+    "Hamburg": (3000.0, 0.0034),
+    "Hessen": (2900.0, 0.0033),
+    "Mecklenburg-Vorpommern": (2150.0, 0.0043),
+    "Niedersachsen": (2500.0, 0.0036),
+    "Nordrhein-Westfalen": (2650.0, 0.0034),
+    "Rheinland-Pfalz": (2550.0, 0.0034),
+    "Saarland": (2500.0, 0.0033),
+    "Schleswig-Holstein": (2450.0, 0.0036),
+    "Sachsen": (2200.0, 0.0043),
+    "Sachsen-Anhalt": (2150.0, 0.0042),
+    "Thüringen": (2150.0, 0.0043),
+}
+
+
+def demo_net_salaries(start: date = date(2024, 1, 1), months: int = 24) -> list[IncomePoint]:
+    """Monthly average net salary per federal state (demo data)."""
+    return [IncomePoint(region=state, period=period, net_salary=round(base * (1 + growth) ** i, 2))
+            for state, (base, growth) in STATE_NET_SALARIES.items()
+            for i, period in enumerate(_months(start, months))]
 
 
 def _months(start: date, n: int) -> list[date]:

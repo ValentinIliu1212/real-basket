@@ -54,6 +54,16 @@ class CpiPoint(BaseModel):
     source: str = "demo"
 
 
+class IncomePoint(BaseModel):
+    """Average monthly net salary (full-time employee) for a region and month."""
+
+    region: str
+    region_type: RegionType = RegionType.STATE
+    period: date
+    net_salary: float = Field(gt=0, description="Average monthly net salary in EUR")
+    source: str = "demo"
+
+
 class ComparisonPoint(BaseModel):
     period: date
     essential_index: float

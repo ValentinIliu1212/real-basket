@@ -13,8 +13,34 @@ from __future__ import annotations
 from strands import tool
 
 from real_basket.core.index import category_indices, compare_with_cpi, essential_index
-from real_basket.data.demo_data import demo_cpi, demo_prices, demo_regional_rents
+from real_basket.data.demo_data import demo_cpi, demo_net_salaries, demo_prices, demo_regional_rents
 from real_basket.schemas.models import BasketWeights, Category, RegionType
+
+
+@tool
+def fetch_net_salaries(months: int = 12, flat_size_m2: float = 70) -> list[dict]:
+    """Fetch the average monthly net salary (EUR, full-time) per German federal state (Bundesland)
+    and the rent burden (net cold rent of a flat with `flat_size_m2` in percent of the net salary).
+
+    Args:
+        months: number of recent months to average over (default 12)
+        flat_size_m2: flat size used for the rent burden (default 70 m2)
+    """
+    incomes = demo_net_salaries(months=months)
+    rents = demo_regional_rents(months=months, region_type=RegionType.STATE)
+    result = []
+    for state in sorted({i.region for i in incomes}):
+        sal = [i.net_salary for i in incomes if i.region == state]
+        rent = [r.price for r in rents if r.region == state]
+        avg_sal, avg_rent = sum(sal) / len(sal), sum(rent) / len(rent)
+        result.append({
+            "bundesland": state,
+            "avg_net_salary_eur": round(avg_sal, 0),
+            "avg_rent_eur_per_m2": round(avg_rent, 2),
+            "rent_burden_pct": round(avg_rent * flat_size_m2 / avg_sal * 100, 1),
+            "months_averaged": months, "source": "demo",
+        })
+    return sorted(result, key=lambda r: -r["avg_net_salary_eur"])
 
 
 @tool

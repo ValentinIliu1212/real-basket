@@ -17,8 +17,9 @@ from reportlab.lib.units import cm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from real_basket.agents.prompts import DISCLAIMER
+from real_basket.core.income import DEFAULT_FLAT_SIZE_M2, average_salaries, rent_burden
 from real_basket.core.rents import TOTAL_COL, average_rents, overall_average
-from real_basket.data.demo_data import demo_cpi, demo_prices, demo_regional_rents
+from real_basket.data.demo_data import demo_cpi, demo_net_salaries, demo_prices, demo_regional_rents
 from real_basket.schemas.models import Category, CpiPoint, PricePoint, RegionType
 
 MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
@@ -219,6 +220,80 @@ def generate_average_rent_report(output_dir: str | Path = "reports", months: int
     return out_file
 
 
+def _summary_table(header: list[str], body: list[list[str]], footer: list[str]) -> Table:
+    """Tabelle: Region | Werte je Jahr | Ø gesamt (fett) + Fußzeile 'Ø alle Bundesländer'."""
+    n_values = len(header) - 1
+    first_w = 4.5 * cm
+    other_w = (landscape(A4)[0] - 2 * cm - first_w) / n_values
+    t = Table([header] + body + [footer], colWidths=[first_w] + [other_w] * n_values, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 8),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8.5),
+        ("FONT", (-1, 1), (-1, -1), "Helvetica-Bold", 8),
+        ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 8),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0072BC")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F2F6FA")]),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#0072BC")),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
+    ]))
+    return t
+
+
+def _format_pct(value: float) -> str:
+    return f"{value:.1f} %".replace(".", ",")
+
+
+def generate_salary_report(output_dir: str | Path = "reports", months: int = 60, end: date | None = None,
+                           flat_size_m2: float = DEFAULT_FLAT_SIZE_M2) -> Path:
+    """PDF: Ø monatliches Nettogehalt pro Bundesland (je Jahr und gesamt) + Mietbelastungsquote."""
+    end = (end or date.today()).replace(day=1)
+    start = _shift_months(end, -(months - 1))
+    incomes = demo_net_salaries(start=start, months=months)  # TODO: echte Quelle bei USE_DEMO_DATA=false
+    rents = demo_regional_rents(start=start, months=months, region_type=RegionType.STATE)
+    styles = getSampleStyleSheet()
+    period_txt = f"{MONTHS_DE[start.month - 1]} {start.year} – {MONTHS_DE[end.month - 1]} {end.year}"
+
+    salaries = average_salaries(incomes)
+    sal_header = ["Bundesland"] + [c if c == TOTAL_COL else f"Ø {c}" for c in salaries.columns]
+    sal_body = [[region] + [format_eur(v) for v in row] for region, row in salaries.iterrows()]
+    sal_footer = ["Ø alle Bundesländer"] + [format_eur(v) for v in salaries.mean(axis=0)]
+
+    burden = rent_burden(rents, incomes, flat_size_m2)
+    bur_body = [[region] + [_format_pct(v) for v in row] for region, row in burden.iterrows()]
+    bur_footer = ["Ø alle Bundesländer"] + [_format_pct(v) for v in burden.mean(axis=0)]
+
+    story = [
+        Paragraph("RealBasket – Durchschnittliches Nettogehalt pro Bundesland", styles["Title"]),
+        Paragraph(f"Zeitraum: {period_txt} ({months} Monate) · Ø monatliches Nettogehalt Vollzeit in EUR · "
+                  f"Erstellt am {date.today():%d.%m.%Y}", styles["Normal"]),
+        Paragraph("<font color='#C0392B'><b>Hinweis: Synthetische Demo-Daten (grobe Größenordnung, aus "
+                  "Bruttoverdiensten abgeleitet) – keine amtlichen Werte.</b></font>", styles["Normal"]),
+        Spacer(1, 0.5 * cm),
+        Paragraph("Ø Nettogehalt pro Monat", styles["Heading2"]),
+        _summary_table(sal_header, sal_body, sal_footer),
+        PageBreak(),
+        Paragraph(f"Mietbelastung: Anteil der Nettokaltmiete ({flat_size_m2:g} m²) am Nettogehalt",
+                  styles["Heading2"]),
+        Paragraph(f"Berechnung: Ø Miete €/m² × {flat_size_m2:g} m² ÷ Ø Nettogehalt. Höchste Belastung zuerst.",
+                  styles["Normal"]),
+        Spacer(1, 0.3 * cm),
+        _summary_table(["Bundesland"] + sal_header[1:], bur_body, bur_footer),
+        Spacer(1, 0.4 * cm),
+        Paragraph("Ø je Jahr = Mittelwert der verfügbaren Monate (Rand-Jahre ggf. unvollständig). "
+                  "„Ø alle Bundesländer“ ist ungewichtet (nicht nach Einwohnern gewichtet).", styles["Italic"]),
+    ]
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    out_file = out / "realbasket_nettogehalt_durchschnitt.pdf"
+    SimpleDocTemplate(str(out_file), pagesize=landscape(A4), leftMargin=1 * cm, rightMargin=1 * cm,
+                      topMargin=1 * cm, bottomMargin=1 * cm, title="RealBasket Ø Nettogehalt",
+                      author="RealBasket").build(story)
+    return out_file
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ein PDF pro Jahr mit Preisen der letzten N Monate (EUR).")
     parser.add_argument("--months", type=int, default=60)
@@ -227,6 +302,7 @@ def main() -> None:
     for f in generate_yearly_price_reports(args.out, args.months):
         print(f"PDF erstellt: {f.resolve()}")
     print(f"PDF erstellt: {generate_average_rent_report(args.out, args.months).resolve()}")
+    print(f"PDF erstellt: {generate_salary_report(args.out, args.months).resolve()}")
 
 
 if __name__ == "__main__":
