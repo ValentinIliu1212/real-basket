@@ -35,6 +35,7 @@ poetry run pytest
 poetry run streamlit run src/real_basket/ui/app.py
 poetry run real-basket-cli "Are basic living costs rising faster than official inflation?"
 poetry run real-basket-pdf --months 60 --out reports   # one PDF per year with monthly prices in EUR
+                                                       # + realbasket_miete_durchschnitt.pdf (Ø rent per state/city)
 ```
 
 ## Methodology

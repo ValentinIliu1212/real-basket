@@ -27,7 +27,8 @@ def fetch_regional_rents(region_type: str = "all", months: int = 13) -> list[dic
         months: months of history used for the year-over-year change (default 13)
 
     Returns:
-        One entry per region with latest rent per m2, YoY change in percent and source.
+        One entry per region with latest rent per m2, average rent per m2 over the period
+        (avg_rent_eur_per_m2), YoY change in percent and source.
     """
     rtype = None if region_type.lower() == "all" else RegionType(region_type.lower())
     rents = demo_regional_rents(months=months, region_type=rtype)
@@ -41,6 +42,7 @@ def fetch_regional_rents(region_type: str = "all", months: int = 13) -> list[dic
         result.append({
             "region_type": rt, "region": region, "period": str(last.period),
             "rent_eur_per_m2": round(last.price, 2),
+            "avg_rent_eur_per_m2": round(sum(p.price for p in pts) / len(pts), 2),
             "change_pct": round((last.price / first.price - 1) * 100, 2),
             "change_since": str(first.period), "source": last.source,
         })

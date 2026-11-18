@@ -17,6 +17,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from real_basket.agents.prompts import DISCLAIMER
+from real_basket.core.rents import TOTAL_COL, average_rents, overall_average
 from real_basket.data.demo_data import demo_cpi, demo_prices, demo_regional_rents
 from real_basket.schemas.models import Category, CpiPoint, PricePoint, RegionType
 
@@ -114,13 +115,20 @@ def _build_year_pdf(year: int, prices: list[PricePoint], cpi: list[CpiPoint], ou
             vals = [values[m] for m in months if m in values]
             reg_rows.append([region, format_eur(sum(vals) / len(vals))]
                             + [format_eur(values[m]) if m in values else "–" for m in months])
+        # Durchschnitt über alle Regionen (ungewichtet)
+        month_avgs = [sum(v[m] for v in by_region.values() if m in v) / len(by_region) for m in months]
+        reg_rows.append(["Ø alle Regionen", format_eur(sum(month_avgs) / len(month_avgs))]
+                        + [format_eur(a) for a in month_avgs])
+        reg_table = styled(reg_rows, colors.HexColor("#0072BC"), reg_widths)
+        reg_table.setStyle(TableStyle([("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 7.5),
+                                       ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#0072BC"))]))
         story += [
             PageBreak(),
             Paragraph(f"{title} – {year}", styles["Heading2"]),
             Paragraph(f"Zeitraum: {period_txt} · Angaben in EUR pro m² Wohnfläche, Angebotsmieten",
                       styles["Normal"]),
             Spacer(1, 0.3 * cm),
-            styled(reg_rows, colors.HexColor("#0072BC"), reg_widths),
+            reg_table,
         ]
         if is_demo:
             story += [Spacer(1, 0.3 * cm),
@@ -157,6 +165,60 @@ def generate_yearly_price_reports(output_dir: str | Path = "reports", months: in
     return files
 
 
+def generate_average_rent_report(output_dir: str | Path = "reports", months: int = 60,
+                                 end: date | None = None) -> Path:
+    """PDF mit der durchschnittlichen Miete (EUR/m²) pro Bundesland und Stadt: je Jahr und gesamt."""
+    end = (end or date.today()).replace(day=1)
+    start = _shift_months(end, -(months - 1))
+    rents = demo_regional_rents(start=start, months=months)  # TODO: echte Quelle bei USE_DEMO_DATA=false
+    styles = getSampleStyleSheet()
+    period_txt = f"{MONTHS_DE[start.month - 1]} {start.year} – {MONTHS_DE[end.month - 1]} {end.year}"
+
+    story = [
+        Paragraph("RealBasket – Durchschnittliche Miete pro Bundesland und Stadt", styles["Title"]),
+        Paragraph(f"Zeitraum: {period_txt} ({months} Monate) · Angebotsmiete nettokalt in EUR pro m² · "
+                  f"Erstellt am {date.today():%d.%m.%Y}", styles["Normal"]),
+        Paragraph("<font color='#C0392B'><b>Hinweis: Synthetische Demo-Daten (grobe Größenordnung) – keine "
+                  "amtlichen Werte.</b></font>", styles["Normal"]),
+    ]
+    for rtype, title in ((RegionType.STATE, "Ø Miete nach Bundesland"),
+                         (RegionType.CITY, "Ø Miete in den größten Städten")):
+        table = average_rents(rents, rtype)
+        overall = overall_average(table)
+        header = ["Region"] + [c if c == TOTAL_COL else f"Ø {c}" for c in table.columns]
+        rows = [header] + [[region] + [format_eur(v) for v in r] for region, r in table.iterrows()]
+        rows.append(["Ø alle Regionen"] + [format_eur(v) for v in overall])
+
+        first_w = 4.5 * cm
+        other_w = (landscape(A4)[0] - 2 * cm - first_w) / len(table.columns)
+        t = Table(rows, colWidths=[first_w] + [other_w] * len(table.columns), repeatRows=1)
+        t.setStyle(TableStyle([
+            ("FONT", (0, 0), (-1, -1), "Helvetica", 8),
+            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8.5),
+            ("FONT", (-1, 1), (-1, -1), "Helvetica-Bold", 8),
+            ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 8),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0072BC")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F2F6FA")]),
+            ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#0072BC")),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
+        ]))
+        story += [Spacer(1, 0.5 * cm), Paragraph(title, styles["Heading2"]), t]
+    story += [Spacer(1, 0.4 * cm),
+              Paragraph("Ø je Jahr = Mittelwert der verfügbaren Monate des Jahres (Rand-Jahre ggf. unvollständig). "
+                        "„Ø alle Regionen“ ist ein ungewichteter Mittelwert, nicht nach Einwohnern gewichtet.",
+                        styles["Italic"])]
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    out_file = out / "realbasket_miete_durchschnitt.pdf"
+    SimpleDocTemplate(str(out_file), pagesize=landscape(A4), leftMargin=1 * cm, rightMargin=1 * cm,
+                      topMargin=1 * cm, bottomMargin=1 * cm, title="RealBasket Ø Miete",
+                      author="RealBasket").build(story)
+    return out_file
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ein PDF pro Jahr mit Preisen der letzten N Monate (EUR).")
     parser.add_argument("--months", type=int, default=60)
@@ -164,6 +226,7 @@ def main() -> None:
     args = parser.parse_args()
     for f in generate_yearly_price_reports(args.out, args.months):
         print(f"PDF erstellt: {f.resolve()}")
+    print(f"PDF erstellt: {generate_average_rent_report(args.out, args.months).resolve()}")
 
 
 if __name__ == "__main__":
