@@ -8,4 +8,4 @@ dist/
 sessions/
 .streamlit/secrets.toml
 .pydevproject
-reports/
+/reports/
