@@ -53,13 +53,20 @@ with `poetry run python docs/architecture/build_decks.py`.
 
 ```
 Streamlit UI / CLI ──► Orchestrator Agent REALBASKET-ORCHESTRATOR (LLM chooses the tools)
-                         ├─ calculate_essential_vs_cpi  ──► core/index.py          (deterministic)
-                         ├─ investigate_deviation       ──► core/investigation.py  (category → item → region)
-                         ├─ collect_category_prices     ──► Collector Agent ──► fetch_prices
-                         ├─ fetch_official_cpi / fetch_regional_rents (cities + state coverage)
-                         └─ search_methodology          ──► knowledge/ (RAG over reference PDFs)
+                         ├─ collect_category_prices ──► Collector Agent ──► get_prices (MCP)
+                         └─ MCPClient (stdio subprocess or Streamable HTTP via MCP_URL)
+                              ▼
+                         MCP server `realbasket` (one process, one module per area)
+                           ├─ data:      get_basket · get_prices · get_cpi · calculate_index · data_checks
+                           │             resources basket://weights · basket://checks       ──► core/index.py, data/
+                           ├─ analysis:  investigate_deviation · get_regional_rents          ──► core/investigation.py
+                           └─ knowledge: search_methodology · list_documents
+                                         resource doc://{file}/seite/{page} · prompt hinweis_zitieren ──► knowledge/
 ```
 
+- **One MCP server** (`src/real_basket/mcp_servers/server.py`) for the hackathon: one process (PDFs parsed once),
+  one client config. The areas are separate modules, so a later split needs only `--areas` – tool names stay the
+  same. The dashboard still calls `core/` and `data/` directly (same numbers, no LLM).
 - **The agent decides** which tools a question needs and how deep to drill down ("why?" → category, then item
   or region). **Code decides the numbers**: the LLM never calculates rates itself.
 - **RAG** (`src/real_basket/knowledge/`):
@@ -73,7 +80,9 @@ Streamlit UI / CLI ──► Orchestrator Agent REALBASKET-ORCHESTRATOR (LLM cho
 
 ```
 src/real_basket/
-├── agents/          # orchestrator.py (chat agent + collector sub-agent), prompts.py, tools.py
+├── agents/          # orchestrator.py (chat agent + collector sub-agent), mcp_clients.py, prompts.py,
+│                    # tools.py (plain-Python access to the tool functions)
+├── mcp_servers/     # MCP server `realbasket`: server.py + data_tools / analysis_tools / knowledge_tools
 ├── core/
 │   ├── index.py         # essential index + CPI comparison
 │   ├── investigation.py # deviation drivers, drill-down by item / city, state coverage
@@ -130,11 +139,24 @@ poetry run real-basket-pdf --out reports
 # Method notes of the reference PDFs (versioned in ./reports/real-data)
 poetry run real-basket-knowledge --rebuild
 poetry run real-basket-knowledge --query "Ist Wohnen / Energie die Nettokaltmiete?"
+
+# MCP server `realbasket` (the chat agent starts it itself via stdio)
+poetry run real-basket-mcp                                          # stdio
+poetry run real-basket-mcp --transport streamable-http --port 8001  # then MCP_URL=http://127.0.0.1:8001/mcp
+poetry run real-basket-mcp --areas data,analysis                    # subset of the areas
+```
+
+**Use the MCP server from Claude Desktop / VS Code** (`claude_desktop_config.json` or `.vscode/mcp.json`; use the
+interpreter of `poetry env info --path`):
+
+```json
+{"mcpServers": {"realbasket": {"command": "<venv>\\Scripts\\python.exe",
+  "args": ["-m", "real_basket.mcp_servers.server"], "cwd": "<path>\\real-basket"}}}
 ```
 
 Settings in `.env`: `OPENAI_API_KEY`, `OPENAI_MODEL_ID`,
 `KNOWLEDGE_DIR` (default `reports/real-data`; source of the real data and the method notes), `KNOWLEDGE_RETRIEVER` (`auto` | `bm25` | `embedding`),
-`EMBEDDING_MODEL_ID`, `KNOWLEDGE_TOP_K` (4). Relative paths are resolved against the project root if they do not
+`EMBEDDING_MODEL_ID`, `KNOWLEDGE_TOP_K` (4), `MCP_URL` (empty = stdio subprocess), `MCP_STARTUP_TIMEOUT` (60 s). Relative paths are resolved against the project root if they do not
 exist in the current folder, and `.env` is read from the project root – so the app works from any folder.
 
 > **"0 Dokumente" in the method-notes tab?** Up to commit `cd9772a` the whole `/reports` folder was git-ignored,

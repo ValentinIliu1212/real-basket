@@ -187,7 +187,7 @@ def current_deck() -> Presentation:
     prs = new_deck()
     title_slide(prs, "RealBasket – Ist-Architektur",
                 "Agentischer Index der Grundlebenshaltungskosten im Vergleich zum amtlichen VPI\n"
-                "Streamlit · Strands Agents · Azure OpenAI · deterministische Rechenkerne")
+                "Streamlit · Strands Agents · MCP · Azure OpenAI · deterministische Rechenkerne")
 
     s = slide(prs, "Was RealBasket heute leistet")
     bullets(s, 0.5, 1.3, 8.0, 5.6, [
@@ -199,26 +199,29 @@ def current_deck() -> Presentation:
         "Mieten der 15 größten Städte (Jan vs. Okt 2026); je Bundesland nur Abdeckung",
         "Methodenhinweise per RAG (BM25 + Embeddings), Zitate mit Datei und Seite",
         "Chat mit RealBasket: Strands-Agent auf Azure OpenAI (gpt-4o), Antworten auf Deutsch",
+        "Alle Werkzeuge im MCP-Server realbasket (ein Prozess, Bereiche data · analysis · knowledge)",
         "Grundsatz: Zahlen nur aus deterministischen Tools – das LLM rechnet nie selbst",
-    ], 16)
+    ], 15)
     box(s, 8.9, 1.5, 3.9, 3.6, "Ergebnis 10/2026 (echte Daten)",
         ["", "Grundbedarf: +2,93 %", "VPI: +2,83 %", "Abweichung: +0,11 PP", "",
          "Größter Einflussfaktor:", "Verkehr / Mobilität (+0,94 PP)"], TEAL, size=17)
     textbox(s, 8.9, 5.25, 3.9, 0.8, "Quelle: ECLI-Modellrechnung 2024–2026, Basis Nov 2024 = 100", 11, GREY)
 
-    s = slide(prs, "Komponenten", "Ein Python-Prozess: Streamlit hostet Dashboard und Agenten; nur das LLM ist extern")
+    s = slide(prs, "Komponenten", "Streamlit hostet Dashboard und Agenten; die Werkzeuge laufen im MCP-Server "
+              "realbasket (Subprozess, stdio); nur das LLM ist extern")
     box(s, 0.5, 1.35, 12.3, 0.7, "Streamlit-UI  (ui/app.py)",
         ["Index vs. VPI · Einflussfaktoren · Miete Städte · Methodenhinweise · "
          "Chat mit RealBasket · Sidebar: Gewichte & PDF-Berichte"], NAVY, size=14)
     box(s, 0.5, 2.4, 4.0, 1.0, "Orchestrator-Agent (Strands)",
-        ["REALBASKET-ORCHESTRATOR · agents/orchestrator.py"], TEAL)
+        ["REALBASKET-ORCHESTRATOR · agents/orchestrator.py", "MCPClient · agents/mcp_clients.py"], TEAL)
     box(s, 5.0, 2.4, 3.6, 1.0, "Price-Collector-Sub-Agent",
-        ["„Agents as Tools“ · collect_category_prices"], TEAL)
+        ["„Agents as Tools“ · collect_category_prices", "nutzt nur get_prices (MCP)"], TEAL)
     box(s, 9.4, 2.4, 3.4, 1.0, "Azure OpenAI",
         ["gpt-4o (Completion)", "text-embedding-3-large"], ORANGE)
-    box(s, 0.5, 3.75, 4.0, 1.0, "Agent-Tools  (agents/tools.py)",
-        ["fetch_prices · fetch_official_cpi · calculate_essential_vs_cpi · investigate_deviation · "
-         "fetch_regional_rents · search_methodology"], SAND, size=12)
+    box(s, 0.5, 3.75, 4.0, 1.0, "MCP-Server realbasket  (mcp_servers/)",
+        ["data: get_basket · get_prices · get_cpi · calculate_index · data_checks",
+         "analysis: investigate_deviation · get_regional_rents",
+         "knowledge: search_methodology · list_documents"], PURPLE, size=11)
     box(s, 5.0, 3.75, 3.6, 1.0, "Prompts  (agents/prompts.py)",
         ["Deutsch · Disclaimer · nur echte Daten, keine Schätzungen"], LIGHT, border=GREY, size=12)
     box(s, 9.4, 3.75, 3.4, 1.0, "PDF-Berichte",
@@ -238,8 +241,8 @@ def current_deck() -> Presentation:
     arrow(s, 8.95, 2.05, 9.4, 4.0, NAVY, label="PDF", lx=8.7, ly=3.35)
     arrow(s, 4.5, 2.9, 5.0, 2.9, TEAL)
     arrow(s, 8.6, 2.9, 9.4, 2.9, ORANGE, both=True)
-    arrow(s, 2.5, 3.4, 2.5, 3.75, TEAL)
-    arrow(s, 5.6, 3.4, 4.3, 3.75, TEAL)
+    arrow(s, 2.5, 3.4, 2.5, 3.75, PURPLE, label="MCP (stdio / HTTP)", lx=2.6, ly=3.42)
+    arrow(s, 5.6, 3.4, 4.3, 3.75, PURPLE)
     arrow(s, 1.5, 4.75, 1.5, 5.05, GREY)
     arrow(s, 3.6, 4.75, 3.9, 5.05, GREY)
     arrow(s, 4.3, 4.75, 6.6, 5.05, GREY)
@@ -251,9 +254,9 @@ def current_deck() -> Presentation:
               "Beispiel: „Steigen die Grundlebenshaltungskosten stärker als der VPI?“")
     flow(s, [
         ("Frage", ["Nutzer fragt im Tab", "„Chat mit RealBasket“"]),
-        ("Orchestrator", ["Streamlit ruft den Agenten", "in-process auf (eine", "Sitzung, Folgefragen)"]),
-        ("Planung", ["gpt-4o wählt die Tools", "(Function Calling)"]),
-        ("Rechnen", ["Tools rechnen deterministisch", "(core/, data/) bzw. suchen", "Hinweise (knowledge/)"]),
+        ("Orchestrator", ["Streamlit ruft den Agenten", "in-process auf; MCP-Server", "startet als Subprozess"]),
+        ("Planung", ["gpt-4o wählt die Tools", "(Function Calling über", "die MCP-Tool-Schemas)"]),
+        ("Rechnen", ["MCP-Tools rechnen deter-", "ministisch (core/, data/)", "bzw. suchen Hinweise"]),
         ("Sub-Agent", ["Price-Collector fasst", "Preise je Ausgabengruppe", "zusammen"]),
         ("Antwort", ["Deutsch, Zahlen aus Tools,", "Quellen „Datei S. N“,", "Disclaimer"]),
     ], y=1.7, h=2.3, fills=[NAVY, TEAL, ORANGE, PURPLE, TEAL, NAVY], size=13)
@@ -296,28 +299,31 @@ def current_deck() -> Presentation:
         ["Schicht", "Technologie", "Rolle"],
         ["UI", "Streamlit, Plotly", "Dashboard, Chat, PDF-Download"],
         ["Agenten", "Strands Agents SDK (OpenAIModel / AzureOpenAIModel)", "Orchestrator + Collector-Sub-Agent"],
+        ["Werkzeuge", "MCP Python SDK (MCPServer), Strands MCPClient", "Ein MCP-Server realbasket, stdio / HTTP"],
         ["LLM", "Azure OpenAI: gpt-4o, text-embedding-3-large", "Planung, Formulierung, Embeddings"],
         ["Daten", "pypdf, pandas, pydantic", "PDF-Parsing, Prüfungen, Modelle"],
         ["Wissen", "eigener BM25 + Embedding-Retriever, index.json", "Methodenhinweise mit Zitaten"],
         ["Berichte", "reportlab", "PDF-Berichte"],
         ["Konfiguration", "pydantic-settings, .env (Projektordner)", "Azure-Einstellungen, KNOWLEDGE_DIR"],
-        ["Qualität / Build", "pytest (31 Tests), ruff, Poetry", "Tests, Lint, Abhängigkeiten"],
-    ], [2.3, 5.6, 4.4], size=14, row_h=0.55)
+        ["Qualität / Build", "pytest (45 Tests inkl. MCP-Contract-Tests), ruff, Poetry",
+         "Tests, Lint, Abhängigkeiten"],
+    ], [2.3, 5.6, 4.4], size=14, row_h=0.52)
 
     s = slide(prs, "Stärken und Grenzen")
     box(s, 0.5, 1.35, 6.0, 0.55, "Stärken", (), TEAL, size=16)
     bullets(s, 0.5, 2.0, 6.0, 4.9, [
-        "Einfach: ein Prozess, ein Deployment – ideal für die Demo",
+        "Einfach: ein Deployment, ein MCP-Server-Prozess – ideal für die Demo",
+        "Werkzeuge per MCP wiederverwendbar (Claude Desktop, VS Code)",
         "Deterministische, nachgeprüfte Zahlen; LLM nur für Sprache",
         "Dashboard und Chat nutzen denselben Rechenkern",
         "Nur echte, nachgerechnete Daten – keine synthetischen Werte",
         "Offline nutzbar ohne LLM (Dashboard, BM25-Suche, PDFs)",
-        "31 automatische Tests, Lint sauber",
+        "45 automatische Tests inkl. MCP-Contract-Tests, Lint sauber",
     ], 16)
     box(s, 6.8, 1.35, 6.0, 0.55, "Grenzen", (), ORANGE, size=16)
     bullets(s, 6.8, 2.0, 6.0, 4.9, [
-        "Tools nur im eigenen Prozess nutzbar – keine Wiederverwendung durch Copilot, Claude & Co.",
-        "Agent läuft im Streamlit-Prozess: skaliert nur mit der UI",
+        "Ein MCP-Server für alle Bereiche: gemeinsame Rechte, gemeinsame Skalierung",
+        "Agent läuft im Streamlit-Prozess: skaliert nur mit der UI; Dashboard nutzt core/ direkt",
         "Sub-Agent eng gekoppelt, nicht separat versionier- oder deploybar",
         "Datenstand fix (PDFs bis 10/2026), keine Live-Anbindung (Destatis)",
         "Keine Mieten je Bundesland, keine Nettogehälter in den Quellen",
@@ -330,8 +336,8 @@ def current_deck() -> Presentation:
 def proposal_deck() -> Presentation:
     prs = new_deck()
     title_slide(prs, "RealBasket – Zielarchitektur mit MCP und A2A",
-                "Vorschlag: Werkzeuge und Daten als MCP-Server, Agenten als A2A-Dienste\n"
-                "Gleicher deterministischer Rechenkern – offen für weitere Clients und Agenten")
+                "Vorschlag: Werkzeuge und Daten per MCP, Agenten als A2A-Dienste\n"
+                "Phase 1 umgesetzt: ein MCP-Server realbasket mit den Bereichen data · analysis · knowledge")
 
     s = slide(prs, "Warum MCP und A2A?")
     bullets(s, 0.5, 1.3, 6.3, 5.6, [
@@ -348,7 +354,8 @@ def proposal_deck() -> Presentation:
         ["Agent ↔ Agent", "", "Agent Card (Fähigkeiten, Endpunkt, Auth)",
          "Tasks · Nachrichten · Artefakte", "JSON-RPC über HTTPS · SSE-Streaming"], TEAL, size=16)
 
-    s = slide(prs, "Zielarchitektur", "Clients → Orchestrator (A2A) → Fach-Agenten (A2A) → MCP-Server → Datenquellen")
+    s = slide(prs, "Zielarchitektur", "Clients → Orchestrator (A2A) → Fach-Agenten (A2A) → MCP-Server realbasket → "
+              "Datenquellen")
     for x, (t, b) in zip((0.5, 3.6, 6.7, 9.8), [("Streamlit-UI", ["Dashboard + Chat · A2A-Client"]),
                                                 ("Microsoft Teams / Copilot", ["A2A-Client"]),
                                                 ("Partner-Agenten", ["z. B. Verbraucherberatung · A2A"]),
@@ -363,15 +370,18 @@ def proposal_deck() -> Presentation:
               ("Methodik-Agent", ["RAG, Zitate"]), ("Report-Agent", ["PDF-Berichte"])]
     for i, (t, b) in enumerate(agents):
         box(s, 0.5 + i * 2.4, 3.45, 2.2, 0.75, t, b, TEAL, size=12)
-    textbox(s, 0.5, 4.22, 12.3, 0.3, "MCP  ·  Streamable HTTP (lokal: stdio)  ·  Tools  ·  Resources  ·  Prompts",
-            11, PURPLE, True)
-    servers = [("realbasket-data", ["get_prices · get_cpi", "calculate_index · data_checks"]),
-               ("realbasket-analysis", ["deviation_breakdown", "city_rents · state_coverage"]),
-               ("realbasket-knowledge", ["search_methodology", "Resource doc://…/seite"]),
-               ("realbasket-report", ["render_pdf", "Resource report://…"]),
-               ("destatis-genesis (neu)", ["get_vpi_table", "Live-VPI"])]
+    textbox(s, 0.5, 4.22, 12.3, 0.3, "MCP-Server realbasket (ein Prozess, ein Modul je Bereich)  ·  stdio / "
+            "Streamable HTTP  ·  Tools · Resources · Prompts", 11, PURPLE, True)
+    box(s, 0.4, 4.5, 9.9, 1.1, "", (), LIGHT, border=PURPLE)
+    servers = [("Bereich data ✓", ["get_prices · get_cpi", "calculate_index · data_checks"]),
+               ("Bereich analysis ✓", ["investigate_deviation", "get_regional_rents"]),
+               ("Bereich knowledge ✓", ["search_methodology", "Resource doc://…/seite"]),
+               ("Bereich report (geplant)", ["render_pdf", "Resource report://…"]),
+               ("destatis-genesis (neu)", ["eigener Server", "get_vpi_table · Live-VPI"])]
     for i, (t, b) in enumerate(servers):
-        box(s, 0.5 + i * 2.5, 4.55, 2.3, 1.0, t, b, PURPLE, size=12)
+        planned = "geplant" in t or "neu" in t
+        box(s, 0.5 + i * 2.5, 4.55, 2.3, 1.0, t, b, LIGHT if planned else PURPLE, size=12,
+            border=PURPLE if planned else None, dashed=planned)
     sources = [("reports/real-data/*.pdf", ["ECLI 2024–2026 · VPI"]), ("Stadtmieten (in den PDFs)",
                                                                        ["15 Städte, immowelt"]),
                ("Vektorindex", ["index.json / Vector Store"]), ("Externe APIs", ["Destatis GENESIS · Mietportale"])]
@@ -395,36 +405,56 @@ def proposal_deck() -> Presentation:
     legend(s, [("Clients", NAVY), ("A2A-Agenten", TEAL), ("MCP-Server", PURPLE), ("LLM", ORANGE),
                ("Datenquellen", LIGHT)])
 
-    s = slide(prs, "MCP-Server im Detail", "Bestehender Code bleibt – die Server sind dünne Hüllen um core/, data/, "
-              "knowledge/ und reports/")
+    s = slide(prs, "MCP-Server realbasket im Detail", "Ein Server-Prozess, ein Modul je Bereich – dünne Hüllen um "
+              "core/, data/, knowledge/ (src/real_basket/mcp_servers/)")
     table(s, 0.5, 1.45, 12.3, [
-        ["MCP-Server", "Tools", "Resources / Prompts", "Implementierung"],
-        ["realbasket-data", "get_basket() · get_prices(category, months) · get_cpi(months) · "
-         "calculate_index(weights, months) · data_checks()", "basket://weights · basket://checks",
-         "data/basket.py, data/real_data.py, core/index.py"],
-        ["realbasket-analysis", "deviation_breakdown(months) · item_changes(category) · city_rents(top) · "
-         "state_coverage()", "–", "core/investigation.py"],
-        ["realbasket-knowledge", "search_methodology(query, year)",
-         "doc://{datei}/seite/{n} · Prompt „Hinweis zitieren“", "knowledge/ingest.py, search.py"],
-        ["realbasket-report", "render_pdf(kind, year)", "report://{name}.pdf", "reports/pdf_report.py"],
-        ["destatis-genesis (neu)", "get_vpi_table(code, from, to)", "–", "GENESIS-API, DESTATIS_GENESIS_TOKEN"],
-    ], [2.4, 4.6, 2.8, 2.5], size=12, row_h=0.75)
-    textbox(s, 0.5, 6.25, 12.3, 0.7, "Nur echte Daten: jedes Tool liefert Datenbasis, Quell-PDFs (Datei, Seite) und "
-            "Prüfergebnisse mit; fehlen die PDFs, kommt ein Fehler statt Zahlen.", 13, GREY)
+        ["Bereich (Modul)", "Tools", "Resources / Prompts", "Status"],
+        ["data (data_tools.py)", "get_basket() · get_prices(category, months) · get_cpi(months) · "
+         "calculate_index(weights, months) · data_checks()", "basket://weights · basket://checks", "umgesetzt"],
+        ["analysis (analysis_tools.py)", "investigate_deviation(level, category, region_type, months) · "
+         "get_regional_rents(region_type)", "–", "umgesetzt"],
+        ["knowledge (knowledge_tools.py)", "search_methodology(query, year) · list_documents()",
+         "doc://{datei}/seite/{n} · Prompt hinweis_zitieren", "umgesetzt"],
+        ["report (geplant)", "render_pdf(kind, year)", "report://{name}.pdf", "offen (reports/pdf_report.py)"],
+        ["destatis-genesis (eigener Server)", "get_vpi_table(code, from, to)", "–",
+         "offen (GENESIS-API, Token)"],
+    ], [2.8, 4.9, 2.7, 1.9], size=12, row_h=0.75)
+    textbox(s, 0.5, 6.25, 12.3, 0.7, "Start: poetry run real-basket-mcp [--transport streamable-http --port 8001] "
+            "[--areas data,analysis]. Nur echte Daten: jedes Tool liefert Datenbasis, Quell-PDFs und Prüfergebnisse "
+            "mit; fehlen die PDFs, kommt ein Fehler statt Zahlen.", 13, GREY)
+
+    s = slide(prs, "Ein MCP-Server statt mehrerer", "Entscheidung für den Hackathon – Aufteilung bleibt jederzeit "
+              "möglich")
+    box(s, 0.5, 1.35, 6.0, 0.55, "Warum ein Server", (), TEAL, size=16)
+    bullets(s, 0.5, 2.0, 6.0, 4.4, [
+        "MCP erlaubt beliebig viele Tools, Resources und Prompts je Server",
+        "Ein Prozess: PDFs werden nur einmal geparst, schnellerer Start",
+        "Ein Eintrag in Claude Desktop / VS Code, eine URL (MCP_URL)",
+        "Weniger Betrieb und Konfiguration für die Demo",
+        "Collector-Sub-Agent erhält per Filter nur get_prices",
+    ], 16)
+    box(s, 6.8, 1.35, 6.0, 0.55, "Wann aufteilen", (), ORANGE, size=16)
+    bullets(s, 6.8, 2.0, 6.0, 4.4, [
+        "Least Privilege: nur knowledge braucht den LLM-Schlüssel (Embeddings)",
+        "Unabhängige Skalierung, z. B. Berichte (report)",
+        "Externe Quellen mit eigenem Token (destatis-genesis)",
+        "Andere Teams übernehmen einzelne Bereiche",
+        "Technisch: --areas bzw. ein Einstiegspunkt je Bereich – Tool-Namen bleiben gleich",
+    ], 16)
 
     s = slide(prs, "A2A-Agenten im Detail", "Jeder Agent veröffentlicht eine Agent Card unter "
               "/.well-known/agent-card.json")
     table(s, 0.5, 1.45, 12.3, [
-        ["Agent", "Skills (Agent Card)", "nutzt MCP-Server", "Ergebnis (Artefakt)"],
+        ["Agent", "Skills (Agent Card)", "nutzt MCP-Bereiche", "Ergebnis (Artefakt)"],
         ["Orchestrator", "Lebenshaltung vs. VPI erklären · Fragen an Fach-Agenten verteilen",
          "– (delegiert)", "Antwort auf Deutsch + Disclaimer"],
-        ["Price-Collector", "Preise je Ausgabengruppe sammeln und zusammenfassen", "realbasket-data",
+        ["Price-Collector", "Preise je Ausgabengruppe sammeln und zusammenfassen", "data",
          "Preisübersicht je Gruppe"],
         ["Abweichungs-Analyst", "Einflussfaktoren · Stadtmieten · Abdeckung je Bundesland",
-         "realbasket-data, realbasket-analysis", "Beiträge in PP, Tabellen"],
-        ["Methodik-Agent", "Methodenhinweise und Grenzen mit Zitat erklären", "realbasket-knowledge",
+         "data, analysis", "Beiträge in PP, Tabellen"],
+        ["Methodik-Agent", "Methodenhinweise und Grenzen mit Zitat erklären", "knowledge",
          "Zitate (Datei, Seite)"],
-        ["Report-Agent", "PDF-Berichte erstellen", "realbasket-report, realbasket-data", "PDF als Artefakt"],
+        ["Report-Agent", "PDF-Berichte erstellen", "report, data", "PDF als Artefakt"],
     ], [2.4, 4.6, 2.8, 2.5], size=13, row_h=0.72)
     textbox(s, 0.5, 6.0, 12.3, 0.9, "Lang laufende Aufgaben (z. B. Berichte) als A2A-Task mit Status-Updates "
             "per SSE; Ergebnisse als Artefakte statt Freitext.", 13, GREY)
@@ -434,7 +464,7 @@ def proposal_deck() -> Presentation:
     flow(s, [
         ("Client", ["Streamlit / Teams sendet", "A2A-Nachricht an den", "Orchestrator"]),
         ("Planung", ["Orchestrator liest Agent", "Cards und verteilt", "Teilaufgaben"]),
-        ("Analyse", ["Abweichungs-Analyst ruft", "calculate_index und", "deviation_breakdown (MCP)"]),
+        ("Analyse", ["Abweichungs-Analyst ruft", "calculate_index und", "investigate_deviation (MCP)"]),
         ("Methodik", ["Methodik-Agent ruft", "search_methodology (MCP),", "parallel zur Analyse"]),
         ("Zusammenführen", ["Orchestrator kombiniert", "Artefakte, prüft", "Quellen + Prüfungen"]),
         ("Antwort", ["Deutsch, Zahlen + Zitate,", "Disclaimer, gestreamt", "per SSE"]),
@@ -445,45 +475,46 @@ def proposal_deck() -> Presentation:
         "Durchgängiges Tracing über A2A- und MCP-Grenzen (OpenTelemetry, in Strands integriert)",
     ], 16)
 
-    s = slide(prs, "Abbildung Ist → Ziel")
+    s = slide(prs, "Abbildung Ist → Ziel", "Stand November 2026: Phase 1 (MCP) umgesetzt, Phase 2 (A2A) offen")
     table(s, 0.5, 1.4, 12.3, [
-        ["Heute", "Ziel", "Protokoll"],
+        ["Vorher", "Ziel", "Protokoll", "Status"],
         ["agents/tools.py: fetch_prices, fetch_official_cpi, calculate_essential_vs_cpi",
-         "MCP-Server realbasket-data", "MCP"],
+         "MCP-Server realbasket, Bereich data", "MCP", "umgesetzt"],
         ["agents/tools.py: investigate_deviation, fetch_regional_rents",
-         "MCP-Server realbasket-analysis", "MCP"],
-        ["agents/tools.py: search_methodology + knowledge/", "MCP-Server realbasket-knowledge (Tools + Resources)",
-         "MCP"],
-        ["ui/app.py: PDF-Download über reports/pdf_report.py", "MCP-Server realbasket-report + Report-Agent",
-         "MCP / A2A"],
-        ["collect_category_prices (Sub-Agent im selben Prozess)", "Price-Collector als eigener Dienst mit Agent Card",
-         "A2A"],
-        ["Orchestrator im Streamlit-Prozess", "Orchestrator-Dienst (A2A-Server)", "A2A"],
-        ["Streamlit ruft den Agenten direkt auf", "Streamlit als A2A-Client; Dashboard nutzt realbasket-data",
-         "A2A / MCP"],
-        ["core/, data/, Tests", "unverändert – gemeinsamer Rechenkern aller MCP-Server", "–"],
-    ], [5.6, 5.0, 1.7], size=13, row_h=0.58)
+         "Bereich analysis (get_regional_rents)", "MCP", "umgesetzt"],
+        ["agents/tools.py: search_methodology + knowledge/", "Bereich knowledge (Tools, Resource, Prompt)",
+         "MCP", "umgesetzt"],
+        ["ui/app.py: PDF-Download über reports/pdf_report.py", "Bereich report + Report-Agent",
+         "MCP / A2A", "offen"],
+        ["collect_category_prices (Sub-Agent im selben Prozess)", "Price-Collector als eigener Dienst",
+         "A2A", "offen (nutzt MCP)"],
+        ["Orchestrator im Streamlit-Prozess", "Orchestrator-Dienst (A2A-Server)", "A2A", "offen"],
+        ["Streamlit ruft den Agenten direkt auf", "Streamlit als A2A-Client; Dashboard über MCP",
+         "A2A / MCP", "offen"],
+        ["core/, data/, Tests", "unverändert; 45 Tests inkl. MCP-Contract-Tests", "–", "umgesetzt"],
+    ], [5.0, 4.2, 1.3, 1.8], size=13, row_h=0.58)
 
-    s = slide(prs, "Umsetzung mit Strands und dem MCP-SDK", "Skizze – alle Bausteine sind als Python-Pakete verfügbar")
+    s = slide(prs, "Umsetzung mit Strands und dem MCP-SDK", "Links umgesetzt (mcp_servers/server.py), "
+              "Mitte und rechts Skizze für Phase 2")
     code = [
-        ("MCP-Server (mcp-SDK, FastMCP)", [
-            "mcp = FastMCP(\"realbasket-data\")",
+        ("MCP-Server realbasket (umgesetzt)", [
+            "server = MCPServer(\"realbasket\")",
+            "for area in (data_tools,",
+            "             analysis_tools,",
+            "             knowledge_tools):",
+            "    area.register(server)",
             "",
-            "@mcp.tool()",
-            "def calculate_index(weights: dict | None = None,",
-            "                    months: int = 12) -> dict:",
-            "    basket = load_basket()",
-            "    return compute(basket, weights, months)",
-            "",
-            "mcp.run(transport=\"streamable-http\")"]),
+            "server.run(\"stdio\")",
+            "# oder \"streamable-http\",",
+            "#      port=8001"]),
         ("Fach-Agent als A2A-Dienst mit MCP-Tools", [
-            "data = MCPClient(lambda: streamablehttp_client(",
-            "    \"http://data-mcp:8001/mcp\"))",
-            "with data:",
+            "mcp = MCPClient(url=",
+            "    \"http://realbasket-mcp:8001/mcp\")",
+            "with mcp:",
             "    collector = Agent(",
             "        name=\"price-collector\",",
             "        model=create_model(),",
-            "        tools=data.list_tools_sync())",
+            "        tools=mcp.list_tools_sync())",
             "    A2AServer(agent=collector,",
             "              port=9001).serve()"]),
         ("Orchestrator ruft A2A-Agenten", [
@@ -501,15 +532,17 @@ def proposal_deck() -> Presentation:
         x = 0.5 + i * 4.15
         box(s, x, 1.45, 4.0, 0.5, t, (), PURPLE if i == 0 else TEAL, size=13)
         box(s, x, 2.0, 4.0, 3.9, "", lines, LIGHT, border=GREY, size=13, align=PP_ALIGN.LEFT, font="Consolas")
-    textbox(s, 0.5, 6.1, 12.3, 0.8, "Pakete: mcp (FastMCP, Streamable HTTP) · strands-agents[a2a] (A2AServer) · "
-            "strands-agents-tools (A2AClientToolProvider) · strands.tools.mcp.MCPClient", 12, GREY)
+    textbox(s, 0.5, 6.1, 12.3, 0.8, "Pakete: mcp (MCPServer, stdio / Streamable HTTP) · strands.tools.mcp.MCPClient · "
+            "Phase 2: strands-agents[a2a] (A2AServer) · strands-agents-tools (A2AClientToolProvider)", 12, GREY)
 
     s = slide(prs, "Querschnittsthemen")
     for i, (t, items, fill) in enumerate([
         ("Sicherheit", ["Entra ID / OAuth 2.1 für MCP-HTTP und A2A", "Auth-Schemata in der Agent Card",
-                        "Schlüssel in Azure Key Vault statt .env", "Least Privilege je MCP-Server"], NAVY),
+                        "Schlüssel in Azure Key Vault statt .env",
+                        "Least Privilege: Bereiche bei Bedarf als eigene Server (--areas)"], NAVY),
         ("Determinismus & Qualität", ["Zahlen nur aus MCP-Tools", "Prüfergebnisse als Resource",
-                                      "Contract-Tests je Tool-Schema", "31 bestehende Tests gegen core/"], TEAL),
+                                      "Contract-Tests je Tool-Schema (umgesetzt)",
+                                      "45 Tests gegen core/ und MCP"], TEAL),
         ("Betrieb", ["Je Dienst ein Container (Azure Container Apps)", "Health-Checks, unabhängige Skalierung",
                      "OpenTelemetry-Tracing über alle Hops", "Versionierte Agent Cards und Tools"], PURPLE),
     ]):
@@ -519,11 +552,12 @@ def proposal_deck() -> Presentation:
 
     s = slide(prs, "Roadmap und Empfehlung")
     for i, (t, b, fill) in enumerate([
-        ("Phase 1 · sofort (1–2 Tage)", ["MCP-Server realbasket-data und", "realbasket-knowledge extrahieren",
-                                        "Agent nutzt MCPClient (stdio)", "Tests unverändert grün",
-                                        "Bonus: Nutzung in Claude Desktop / VS Code"], PURPLE),
-        ("Phase 2 · nach dem Hackathon", ["Collector, Analyst, Methodik als", "A2A-Dienste mit Agent Cards",
-                                          "Orchestrator als A2A-Server", "Streamlit als A2A-Client"], TEAL),
+        ("Phase 1 · umgesetzt ✓", ["Ein MCP-Server realbasket", "Bereiche data · analysis · knowledge",
+                                   "Agent nutzt MCPClient (stdio / HTTP)", "45 Tests grün",
+                                   "Nutzbar in Claude Desktop / VS Code"], PURPLE),
+        ("Phase 2 · nach dem Hackathon", ["Bereich report + Report-Agent", "Collector, Analyst, Methodik als",
+                                          "A2A-Dienste mit Agent Cards", "Orchestrator als A2A-Server",
+                                          "Streamlit als A2A-Client"], TEAL),
         ("Phase 3 · Produktion", ["destatis-genesis-MCP (Live-VPI)", "Neue Quellen: Ländermieten, Gehälter",
                                   "Entra ID, Key Vault, Container Apps", "OpenTelemetry, Monitoring"], NAVY),
     ]):

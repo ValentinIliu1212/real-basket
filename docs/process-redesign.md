@@ -29,11 +29,14 @@
 flowchart TD
     U(["Question<br/>dashboard chat · real-basket-cli"]) --> O
     O["REALBASKET-ORCHESTRATOR (agent)<br/>chooses tools"]
-    O --> C["calculate_essential_vs_cpi<br/>(code: core/index.py)"]
-    O --> I["investigate_deviation<br/>category → item / city<br/>(code: core/investigation.py)"]
-    O --> R["fetch_regional_rents (cities, state coverage)<br/>fetch_official_cpi (code)"]
-    O --> COL["collect_category_prices<br/>→ REALBASKET-COLLECTOR (agent) → fetch_prices"]
-    O --> K["search_methodology<br/>(RAG: knowledge/, BM25 / embeddings)"]
+    O -- "MCP (stdio / HTTP)" --> M
+    subgraph M["MCP server realbasket (one process)"]
+        C["data: calculate_index, get_cpi, get_prices, data_checks<br/>(code: core/index.py)"]
+        I["analysis: investigate_deviation<br/>category → item / city<br/>(code: core/investigation.py)"]
+        R["analysis: get_regional_rents (cities, state coverage)"]
+        K["knowledge: search_methodology<br/>(RAG: knowledge/, BM25 / embeddings)"]
+    end
+    O --> COL["collect_category_prices<br/>→ REALBASKET-COLLECTOR (agent) → get_prices (MCP)"]
     K --> PDF[("reports/real-data/*.pdf<br/>method notes, caveats")]
     C & I & R & COL --> B[("load_basket()<br/>real data: PDF tables, re-checked<br/>no fallback")]
     B --> PDF

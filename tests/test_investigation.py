@@ -47,8 +47,10 @@ def test_investigate_tool_levels():
     from real_basket.agents.tools import investigate_deviation
 
     basket = load_basket()
-    res = investigate_deviation._tool_func("category")
-    assert res["categories"] and res["data_basis"] == basket.label
-    assert investigate_deviation._tool_func("item", basket.categories[0].value)["items"]
-    assert "error" in investigate_deviation._tool_func("item", "x")
-    assert "error" in investigate_deviation._tool_func("item", "rent")
+    res = investigate_deviation("category")
+    assert res["data_basis"] == basket.label
+    assert {c["category"] for c in res["categories"]} == ALL           # drivers, not the label dict
+    assert res["category_labels"]["mobility"]
+    assert investigate_deviation("item", basket.categories[0].value)["items"]
+    assert "error" in investigate_deviation("item", "x")
+    assert "error" in investigate_deviation("item", "rent")

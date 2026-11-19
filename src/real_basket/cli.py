@@ -7,7 +7,11 @@ from real_basket.agents.orchestrator import create_orchestrator
 
 def main() -> None:
     prompt = " ".join(sys.argv[1:]) or "Steigen die Grundlebenshaltungskosten schneller als die Inflation?"
-    print(create_orchestrator()(prompt))
+    agent = create_orchestrator()
+    try:
+        print(agent(prompt))
+    finally:
+        agent.cleanup()        # stop the MCP server subprocess
 
 
 if __name__ == "__main__":

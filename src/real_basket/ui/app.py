@@ -250,7 +250,9 @@ with tab_agent:
             st.session_state.pending = q
     if cols[-1].button("🗑️ Neuer Chat", width="stretch"):
         st.session_state.messages = []
-        st.session_state.pop("agent", None)
+        old_agent = st.session_state.pop("agent", None)
+        if old_agent is not None and hasattr(old_agent, "cleanup"):
+            old_agent.cleanup()               # stops the MCP server subprocess of the old session
 
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):

@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_ID: str = "text-embedding-3-small"
     KNOWLEDGE_TOP_K: int = 4                   # passages per search
 
+    # --- MCP server `realbasket` (target architecture phase 1) -------------------------------------------
+    # empty -> the agent starts the server as a local subprocess (stdio); otherwise Streamable HTTP URL,
+    # e.g. http://127.0.0.1:8001/mcp
+    MCP_URL: str = ""
+    MCP_STARTUP_TIMEOUT: int = 60              # seconds (the server parses the PDFs on first use)
+
 
 @lru_cache
 def get_settings() -> Settings:

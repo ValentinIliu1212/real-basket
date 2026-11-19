@@ -1,4 +1,8 @@
-"""Agent factory: orchestrator agent that uses a collector sub-agent ("agents as tools" pattern)."""
+"""Agent factory: orchestrator agent with MCP tools and a collector sub-agent ("agents as tools" pattern).
+
+Target architecture phase 1: all tools (data, VPI, index calculation, deviation analysis, regional rents, method
+notes) come from ONE MCP server `realbasket` (stdio subprocess by default, Streamable HTTP if MCP_URL is set).
+"""
 
 from __future__ import annotations
 
@@ -9,16 +13,10 @@ from typing import Any
 import openai
 from strands import Agent, tool
 from strands.models.openai import OpenAIModel
+from strands.tools.mcp import MCPClient
 
+from real_basket.agents.mcp_clients import mcp_client
 from real_basket.agents.prompts import COLLECTOR_PROMPT, ORCHESTRATOR_PROMPT
-from real_basket.agents.tools import (
-    calculate_essential_vs_cpi,
-    fetch_official_cpi,
-    fetch_prices,
-    fetch_regional_rents,
-    investigate_deviation,
-    search_methodology,
-)
 from real_basket.core import llm
 from real_basket.core.settings import get_settings
 
@@ -45,27 +43,39 @@ def create_model(temperature: float = 0.2) -> OpenAIModel:
     )
 
 
-@tool
-def collect_category_prices(category: str) -> str:
-    """Delegate price collection for one expenditure group of the reference basket ('food', 'housing_energy',
-    'mobility', 'health', 'communication') to the specialised Price Collector agent and return its summary."""
-    collector = Agent(
-        name="REALBASKET-COLLECTOR",
-        system_prompt=COLLECTOR_PROMPT,
-        model=create_model(),
-        tools=[fetch_prices],
-        callback_handler=None,
-    )
-    return str(collector(f"Collect and summarise prices for category '{category}'."))
+COLLECTOR_TOOLS = ("get_prices",)
+
+
+def make_collector_tool(server: MCPClient):
+    """Collector sub-agent as a tool; it only gets `get_prices` of the (already running) MCP client."""
+
+    @tool
+    def collect_category_prices(category: str) -> str:
+        """Delegate price collection for one expenditure group of the reference basket ('food',
+        'housing_energy', 'mobility', 'health', 'communication') to the specialised Price Collector agent and
+        return its summary."""
+        tools = [t for t in server.list_tools_sync() if t.tool_name in COLLECTOR_TOOLS]
+        collector = Agent(
+            name="REALBASKET-COLLECTOR",
+            system_prompt=COLLECTOR_PROMPT,
+            model=create_model(),
+            tools=tools,
+            callback_handler=None,
+        )
+        return str(collector(f"Collect and summarise prices for category '{category}'."))
+
+    return collect_category_prices
 
 
 def create_orchestrator() -> Agent:
+    """Chat agent. The MCP client is managed by the agent: the server starts with the agent and stops when it
+    is cleaned up (`agent.cleanup()` or garbage collection)."""
     settings = get_settings()
+    server = mcp_client(settings)
     return Agent(
         name=settings.AGENT_NAME,
         system_prompt=ORCHESTRATOR_PROMPT,
         model=create_model(),
-        tools=[collect_category_prices, fetch_official_cpi, calculate_essential_vs_cpi, fetch_regional_rents,
-               investigate_deviation, search_methodology],
+        tools=[server, make_collector_tool(server)],
         callback_handler=None,
     )
