@@ -15,7 +15,7 @@ baskets of goods and different weightings.
 ## Demo in 3 minutes
 
 1. `poetry run streamlit run src/real_basket/ui/app.py` → the header shows essential inflation, VPI, the
-   deviation and its **biggest driver** at a glance (real data 10/2026: 2,93 % vs. 2,83 %, +0,11 PP, driver
+   deviation and its **biggest driver** ("Größter Einflussfaktor") at a glance (real data 10/2026: 2,93 % vs. 2,83 %, +0,11 PP, driver
    Verkehr / Mobilität). The expander **Datenprüfung** lists the 9 re-checks of the PDF import.
 2. Move the **basket weights** in the sidebar → index, deviation and drivers update immediately (untouched
    sliders = exact expenditure shares of the reference basket). Switch **Datenquelle** real ↔ demo; the chat

@@ -132,7 +132,7 @@ c1, c2, c3, c4 = st.columns(4)
 c1.metric("Grundlebenshaltungskosten (ggü. Vorjahr)", f"{de(breakdown['essential_yoy_pct'])} %")
 c2.metric("Offizieller VPI (ggü. Vorjahr)", f"{de(breakdown['cpi_yoy_pct'])} %")
 c3.metric("Abweichung", f"{'+' if breakdown['deviation_pp'] >= 0 else ''}{de(breakdown['deviation_pp'])} PP")
-c4.metric("Größter Treiber", CATEGORY_LABEL[driver["category"]],
+c4.metric("Größter Einflussfaktor", CATEGORY_LABEL[driver["category"]],
           f"{'+' if driver['gap_pp'] >= 0 else ''}{de(driver['gap_pp'])} PP", delta_color="inverse")
 data_note = "echte Daten" if basket.source == "real" else "Demo-Daten"
 st.info(f"Stand {pd.Timestamp(breakdown['period']):%m/%Y} · {data_note} · {DISCLAIMER}")

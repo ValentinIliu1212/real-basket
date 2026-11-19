@@ -48,7 +48,7 @@ For the latest month *t* and *t−12*:
 - contribution_pp(c) = w_c × (I_c(t) − I_c(t−12)) ÷ E(t−12) × 100 — sums to the essential YoY rate
 - gap_pp(c) = contribution_pp(c) − w_c × CPI YoY — sums to the deviation (essential YoY − CPI YoY)
 
-The dashboard header shows the category with the largest |gap_pp| as "biggest driver".
+The dashboard header shows the category with the largest |gap_pp| as "Größter Einflussfaktor" (biggest driver).
 
 ## 4. Method notes (RAG)
 
