@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     # Re-using stored, validated data (planned re-use or fallback when fresh data is lost): at most this
     # many trailing months may be carried forward with the last observed value (flagged in the report).
     MAX_CARRY_FORWARD_MONTHS: int = 3
+
+    # --- Method notes from reference documents (RAG retrieval, see real_basket.knowledge) ---------
+    KNOWLEDGE_DIR: str = "reports/real-data"   # PDFs whose method notes / caveats are indexed
+    KNOWLEDGE_RETRIEVER: str = "auto"          # bm25 | embedding | auto (embedding if OPENAI_API_KEY set)
+    EMBEDDING_MODEL_ID: str = "text-embedding-3-small"
+    KNOWLEDGE_TOP_K: int = 4                   # passages per search
+    MAX_KNOWLEDGE_QUERIES: int = 3             # method-note searches per monitoring run (analyst + reporter)
     # Probability that a demo "primary" source returns faulty data (outliers, gaps, missing
     # provenance) so the validation loop has something to do. Set 0 for clean demo data.
     DEMO_FAULT_RATE: float = 0.35

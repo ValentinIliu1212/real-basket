@@ -8,14 +8,23 @@ from strands import tool
 from real_basket.core.investigation import category_breakdown, item_changes, regional_rent_changes
 from real_basket.data.sources import SourceUnavailableError, get_source, period_range, sources_for
 from real_basket.flow.context import RunContext
+from real_basket.knowledge.search import USAGE_NOTE, KnowledgeBase
 from real_basket.schemas.flow import CATEGORY_DATASETS, DATASETS, DatasetStatus, Decision, RunPlan
 
 OUTPUTS = ("chat", "dashboard", "pdf", "alert")
 
 
 class FlowTools:
-    def __init__(self, ctx: RunContext):
+    def __init__(self, ctx: RunContext, kb: KnowledgeBase | None = None):
         self.ctx = ctx
+        self._kb = kb
+
+    @property
+    def kb(self) -> KnowledgeBase:
+        if self._kb is None:   # index lives next to the run data of this store
+            self._kb = KnowledgeBase(index_path=self.ctx.store.root / "knowledge" / "index.json",
+                                     settings=self.ctx.settings)
+        return self._kb
 
     # --- shared ---------------------------------------------------------------------------------
     def run_state(self) -> dict:
@@ -33,6 +42,9 @@ class FlowTools:
             "replan_request": c.replan_request, "replans_used": c.replans, "max_replans": s.MAX_REPLANS,
             "investigation_steps_used": c.investigation_steps,
             "results_available": c.results is not None, "analysis": c.analysis,
+            "method_notes": {cite: {k: n[k] for k in ("source", "page", "section", "text")}
+                             for cite, n in c.method_notes.items()},
+            "knowledge_queries_left": s.MAX_KNOWLEDGE_QUERIES - c.knowledge_queries,
         }
 
     # --- planner --------------------------------------------------------------------------------
@@ -172,16 +184,54 @@ class FlowTools:
         if abs(c.results["deviation_pp"]) > c.settings.DEVIATION_THRESHOLD_PP and c.investigation_steps == 0:
             return (f"Rejected: deviation {c.results['deviation_pp']:+.2f} pp exceeds the threshold of "
                     f"{c.settings.DEVIATION_THRESHOLD_PP} pp. Investigate first (tool `investigate`).")
+        unknown = c.unknown_citations(" ".join([summary, *drivers]))
+        if unknown:
+            return self._reject_citations("analyst", unknown)
         c.analysis = {"summary": summary, "drivers": drivers, "confidence": max(0.0, min(1.0, confidence))}
         c.log("analyst", "analysis_submitted", **c.analysis)
         return "Analysis stored."
 
+    # --- analyst + reporter: method notes from reference documents (RAG) ------------------------
+    def search_methodology(self, query: str, year: int = 0, actor: str = "analyst") -> dict:
+        c = self.ctx
+        limit = c.settings.MAX_KNOWLEDGE_QUERIES
+        if c.knowledge_queries >= limit:
+            return {"error": f"Method-note search budget ({limit} queries per run) used up. Use the passages "
+                             "already retrieved (run state: method_notes)."}
+        c.knowledge_queries += 1
+        try:
+            res = self.kb.search(query, year=year or None)
+        except Exception as exc:  # noqa: BLE001 - a broken document must not break the run
+            c.log("guardrail", "method_search_failed", actor=actor, query=query, error=str(exc))
+            return {"error": f"Method-note search failed: {exc}. Continue without method notes."}
+        passages = [{"cite": f"[{c.add_method_note(p, query)}]",
+                     **{k: p[k] for k in ("source", "page", "also_in", "section", "kind", "text")}}
+                    for p in res["passages"]]
+        c.log(actor, "method_search", query=query, year=year or None, retriever=res["retriever"],
+              hits=[{"cite": p["cite"], "source": p["source"], "page": p["page"]} for p in passages])
+        return {"query": query, "retriever": res["retriever"], "passages": passages,
+                "usage": f"{USAGE_NOTE} Cite a passage with its id, e.g. {passages[0]['cite'] if passages else '[M1]'}.",
+                "queries_left": limit - c.knowledge_queries,
+                **({"note": res["note"]} if not passages and res.get("note") else {})}
+
+    def _reject_citations(self, actor: str, unknown: list[str]) -> str:
+        self.ctx.log("guardrail", "unknown_citation_rejected", actor=actor, citations=unknown)
+        known = ", ".join(f"[{k}]" for k in self.ctx.method_notes) or "none (use search_methodology first)"
+        return (f"Rejected: citation(s) {', '.join(f'[{u}]' for u in unknown)} do not refer to a passage "
+                f"retrieved in this run. Known citations: {known}. Remove or correct them and submit again.")
+
     # --- reporter -------------------------------------------------------------------------------
     def submit_report(self, markdown: str, outputs: list[str], confidence: float) -> str:
+        unknown = self.ctx.unknown_citations(markdown)
+        if unknown:
+            return self._reject_citations("reporter", unknown)
         chosen = [o.lower() for o in outputs if o.lower() in OUTPUTS] or ["chat"]
-        self.ctx.report = {"markdown": markdown, "outputs": chosen, "confidence": max(0.0, min(1.0, confidence))}
-        self.ctx.log("reporter", "report_submitted", outputs=chosen, confidence=confidence)
-        return f"Report stored. Outputs: {chosen}. Disclaimer and provenance are appended automatically."
+        cited = self.ctx.cited_notes(markdown)
+        self.ctx.report = {"markdown": markdown, "outputs": chosen, "confidence": max(0.0, min(1.0, confidence)),
+                           "cited_notes": cited}
+        self.ctx.log("reporter", "report_submitted", outputs=chosen, confidence=confidence, cited_notes=cited)
+        return (f"Report stored. Outputs: {chosen}. Disclaimer, provenance and the list of cited method notes "
+                "are appended automatically.")
 
 
 def strands_toolsets(ft: FlowTools) -> dict[str, list]:
@@ -287,16 +337,32 @@ def strands_toolsets(ft: FlowTools) -> dict[str, list]:
         """Store the final report.
 
         Args:
-            markdown: the report in Markdown (numbers only from get_results / analysis)
+            markdown: the report in Markdown (numbers only from get_results / analysis; cite method notes as
+                      [M1] - only ids returned by search_methodology in this run are accepted)
             outputs: channels from ['chat', 'dashboard', 'pdf', 'alert']
             confidence: your confidence that the report is correct and well supported (0-1)
         """
         return ft.submit_report(markdown, outputs, confidence)
 
+    def search_tool(actor: str):
+        @tool(name="search_methodology")
+        def search_methodology(query: str, year: int = 0) -> dict:
+            """Search method notes and caveats in the reference documents (German PDF reports of the ECLI
+            model calculation in reports/real-data). Returns passages with a citation id ([M1], ...), file and
+            page. Use for methodological context (e.g. 'Wohnen / Energie ist keine Nettokaltmiete', modelled
+            vs. measured data, regional coverage). Never take figures from passages. Limited budget per run.
+
+            Args:
+                query: search terms; German keywords work best (e.g. 'Nettokaltmiete Wohnen Energie')
+                year: only documents of this year (0 = all)
+            """
+            return ft.search_methodology(query, year, actor=actor)
+        return search_methodology
+
     return {
         "planner": [get_run_state, get_memory, list_sources, submit_plan],
         "collector": [get_run_state, list_sources, fetch_from_source],
         "validator": [get_run_state, submit_decision],
-        "analyst": [get_results, investigate, request_more_data, submit_analysis],
-        "reporter": [get_run_state, get_results, submit_report],
+        "analyst": [get_results, investigate, search_tool("analyst"), request_more_data, submit_analysis],
+        "reporter": [get_run_state, get_results, search_tool("reporter"), submit_report],
     }

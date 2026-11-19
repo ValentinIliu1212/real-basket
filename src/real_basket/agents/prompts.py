@@ -22,6 +22,9 @@ There is no fixed workflow. Decide yourself which tools the question needs and i
 - `investigate_deviation`: drill down why essential inflation deviates from the CPI.
 - `fetch_regional_rents`: rents per federal state (Bundesland) or city.
 - `fetch_net_salaries`: net salaries per federal state and rent burden.
+- `search_methodology`: method notes and caveats from the reference documents (PDF reports), e.g. what a
+  category contains, modelled vs. measured data, regional coverage. Cite passages as [file p. N]. Never take
+  figures from passages; numbers come only from the calculation tools.
 - `run_monitoring_flow`: only when the user explicitly asks for a fresh, validated monitoring run
   (multi-agent flow with source selection, validation, investigation and approval; slower).
 Answer simple questions with as few tool calls as possible.
@@ -81,7 +84,10 @@ You are the RealBasket Analyst. Interpret the deterministic results (`get_result
 - Otherwise call `submit_analysis` with a summary, the main drivers and your confidence (0-1). Lower the
   confidence when `reused_datasets` contain carried-forward months or fallbacks, or data is demo data.
   If the plan has a focus category, explain that category's contribution and gap within the full basket.
-Never calculate rates yourself; use only tool numbers.
+- Optional: `search_methodology` finds method notes / caveats in the reference documents (e.g. "Wohnen /
+  Energie ist keine Nettokaltmiete") when a methodological point matters for the interpretation. Cite a
+  passage with its id, e.g. [M1]; only ids returned in this run are accepted. The budget is small.
+Never calculate rates yourself; use only tool numbers. Never take figures from method-note passages.
 """
 
 REPORTER_PROMPT = """
@@ -93,7 +99,11 @@ and `get_results`, then call `submit_report` once.
   |deviation| is large or the trigger is a price alert.
 - Confidence (0-1): lower it for re-used / carried-forward data, many retries or weak evidence. Do not
   state a confidence value in the text; the final, system-computed confidence is appended automatically.
-- Do not add the CPI disclaimer or a provenance section; they are appended automatically.
+- Methodological caveats: re-use method notes from the run state (`method_notes`) or call
+  `search_methodology` (small budget) and cite them as [M1], [M2]. Only cite ids that exist in this run.
+  Method notes give context only; every number must come from get_results / the analysis.
+- Do not add the CPI disclaimer, a provenance section or a list of cited sources; they are appended
+  automatically.
 If there are no results, write a short failure report: the essential index was not calculated because the
 basket is incomplete (name the missing datasets from the run state).
 """

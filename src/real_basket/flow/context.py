@@ -7,6 +7,7 @@ Routing between graph nodes is a pure read of this state (see `next_after_*`).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -31,6 +32,8 @@ from real_basket.schemas.flow import (
 
 # approver(kind, payload) -> kind "data": "accept" | "exclude"; kind "publish": True | False | None (later)
 Approver = Callable[[str, dict], Any]
+
+CITATION_RE = re.compile(r"\[(M\d+)\]")
 
 
 @dataclass
@@ -62,6 +65,8 @@ class RunContext:
     replans: int = 0
     replan_request: dict | None = None
     analysis: dict | None = None
+    method_notes: dict[str, dict] = field(default_factory=dict)   # citation id "M1" -> retrieved passage
+    knowledge_queries: int = 0
     report: dict | None = None
     confidence: float | None = None
     approved: bool | None = None
@@ -181,6 +186,24 @@ class RunContext:
         self.log(actor, "validation_decision", dataset=dataset, **entry)
         return f"Decision for '{dataset}': {decision.value}."
 
+    # --- method notes (RAG) ----------------------------------------------------------------------
+    def add_method_note(self, passage: dict, query: str) -> str:
+        """Register a retrieved passage under a stable citation id ('M1', 'M2', ...) for this run."""
+        for cite, note in self.method_notes.items():
+            if note["chunk_id"] == passage["chunk_id"]:
+                return cite
+        cite = f"M{len(self.method_notes) + 1}"
+        self.method_notes[cite] = {**{k: passage[k] for k in ("chunk_id", "source", "page", "also_in", "section",
+                                                              "text")}, "query": query}
+        return cite
+
+    def unknown_citations(self, text: str) -> list[str]:
+        """Citations like [M7] that do not refer to a passage retrieved in this run (hallucinated sources)."""
+        return sorted({c for c in CITATION_RE.findall(text) if c not in self.method_notes})
+
+    def cited_notes(self, text: str) -> list[str]:
+        return [c for c in dict.fromkeys(CITATION_RE.findall(text)) if c in self.method_notes]
+
     # --- routing (pure reads, evaluated by graph edge conditions) -------------------------------
     def next_after_plan_gate(self) -> str:
         return "collector" if self.with_status(DatasetStatus.PENDING) else "calculate"
@@ -231,6 +254,7 @@ class RunContext:
             "human_overrides": self.human_overrides, "reused": self.reused, "results": self.results,
             "calc_error": self.calc_error,
             "investigations": self.investigations, "replans": self.replans, "analysis": self.analysis,
+            "method_notes": self.method_notes, "knowledge_queries": self.knowledge_queries,
             "report": self.report, "confidence": self.confidence, "approved": self.approved,
             "approval_reason": self.approval_reason,
             "published_files": self.published_files, "path": self.path,

@@ -136,6 +136,28 @@ def investigate_deviation(level: str = "category", category: str = "", region_ty
 
 
 @tool
+def search_methodology(query: str, year: int = 0) -> dict:
+    """Search method notes and caveats in the reference documents (German PDF reports on the ECLI model
+    calculation). Returns passages with file, page and section. Use for methodological questions, e.g. what
+    'Wohnen / Energie' contains, modelled vs. measured data, which federal states have verified rent series.
+    Never take figures from the passages.
+
+    Args:
+        query: search terms; German keywords work best (e.g. 'Nettokaltmiete Wohnen Energie')
+        year: only documents of this year (0 = all)
+    """
+    from real_basket.knowledge import KnowledgeBase
+
+    try:
+        res = KnowledgeBase().search(query, year=year or None)
+    except Exception as exc:  # noqa: BLE001 - the chat must keep working without documents
+        return {"error": f"Method-note search failed: {exc}"}
+    return {"query": query, "retriever": res["retriever"], "note": res["note"],
+            "passages": [{"cite": f"{p['source']} p. {p['page']}",
+                          **{k: p[k] for k in ("section", "text", "also_in")}} for p in res["passages"]]}
+
+
+@tool
 def run_monitoring_flow(goal: str) -> dict:
     """Start a full monitoring run (multi-agent flow: planning, source selection, validation loop,
     investigation, report, release gate). Slow; only use when the user explicitly asks for a fresh,

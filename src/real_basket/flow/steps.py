@@ -111,6 +111,13 @@ def final_markdown(ctx: RunContext) -> str:
     parts = [body.strip()]
     if r.get("demo_data", True):
         parts.append(DEMO_NOTICE)
+    cited = ctx.cited_notes(body)
+    if cited:
+        lines = [f"- [{c}] {n['source']}, p. {n['page']}" + (f" · {n['section']}" if n["section"] else "")
+                 + (f" (also in: {'; '.join(n['also_in'])})" if n["also_in"] else "")
+                 for c, n in ((c, ctx.method_notes[c]) for c in cited)]
+        parts.append("**Method notes cited** (reference documents; context only, not the source of any figure):\n"
+                     + "\n".join(lines))
     datasets = ", ".join(f"{d}: {s.value}" for d, s in ctx.status.items())
     reused = "; ".join(
         f"{d} from run {r['from_run']} ({r['reason']}"

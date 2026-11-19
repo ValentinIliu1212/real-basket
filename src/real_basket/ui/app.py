@@ -151,6 +151,25 @@ with tab_flow:
                                weights={c.value: w for c, w in weights.weights.items()}, store=store)
             st.success(f"Run {ctx.run_id}: {ctx.run_status.value} (confidence {ctx.confidence})")
 
+    with st.expander("🔎 Method notes from reference documents (RAG)"):
+        from real_basket.knowledge import KnowledgeBase
+
+        kb = KnowledgeBase(index_path=store.root / "knowledge" / "index.json")
+        try:
+            kb_status = kb.status()
+            st.caption(f"{len(kb_status['documents'])} document(s) in `{kb_status['doc_dir']}` · "
+                       f"{kb_status['notes']} note + {kb_status['tables']} table passages · "
+                       f"retriever: {kb_status['retriever']}. Context only – figures never come from here.")
+            kq = st.text_input("Search", placeholder="e.g. Ist Wohnen / Energie die Nettokaltmiete?")
+            if kq:
+                hits = kb.search(kq)["passages"]
+                for p in hits:
+                    st.markdown(f"**{p['source']} p. {p['page']}** · {p['section']}\n\n> {p['text']}")
+                if not hits:
+                    st.info("No matching passages.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Method-note index unavailable: {exc}")
+
     runs = store.list_runs()
     if not runs:
         st.info("No runs yet.")
@@ -182,6 +201,13 @@ with tab_flow:
                     reject_run(store, run["run_id"], rejected_by="dashboard", reason=reason)
                     st.rerun()
             st.markdown((run.get("report") or {}).get("final_markdown", "_no report_"))
+            notes = run.get("method_notes") or {}
+            if notes and st.checkbox(f"Show retrieved method notes ({len(notes)})", key=f"notes_{run['run_id']}"):
+                cited = set((run.get("report") or {}).get("cited_notes", []))
+                st.dataframe(pd.DataFrame([{"cite": c, "cited": c in cited, "source": n["source"],
+                                            "page": n["page"], "section": n["section"], "query": n.get("query", ""),
+                                            "text": n["text"]} for c, n in notes.items()]),
+                             use_container_width=True, hide_index=True)
             if st.checkbox("Show audit trail", key=f"audit_{run['run_id']}"):
                 st.dataframe(pd.DataFrame(store.load_audit(run["run_id"])).astype(str), use_container_width=True)
 

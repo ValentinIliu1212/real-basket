@@ -22,6 +22,7 @@ baskets of goods and different weightings.
 | PDF reports | One PDF per year + average rent report + net salary / rent burden report (German, EUR) |
 | AI agent | Strands chat agent answering questions in natural language based on tool results |
 | **Monitoring flow** | **Non-deterministic multi-agent process** (Strands Graph): planner → collector → validator loop → fixed calculation → analyst with investigation / re-planning → reporter → human approval → publish, with audit trail and memory |
+| **Method notes (RAG)** | Search over method notes and caveats of reference PDF reports (`reports/real-data`); analyst, reporter and chat agent cite passages with file + page. Context only – figures never come from text search |
 
 ## Architecture
 
@@ -57,6 +58,22 @@ trigger (schedule / question / price_alert)
   `audit.jsonl`, published `report.md` / `report.pdf` / `alert.json`); `data_store/memory.json` keeps source
   reliability and past results for the next plan.
 
+**Method notes from reference documents (RAG)** (`src/real_basket/knowledge/`)
+
+- **Ingest** (`ingest.py`, pypdf): prose paragraphs (method notes, caveats, data-quality hints, sources) and the
+  *non-numeric* cells of tables (e.g. "Brandenburg · Keine verifizierte Monatsreihe") become passages. Numeric
+  cells and data tables are dropped on purpose, repeated page headers / numbers are removed, identical passages
+  from several yearly reports are stored once with all locations.
+- **Search** (`search.py`): `bm25` (offline, German-aware: stemming, compounds such as Kaltmiete →
+  Nettokaltmiete, English → German glossary) or `embedding` (OpenAI, fused with BM25). `auto` = embedding if an
+  API key is set; embedding errors fall back to BM25. Index: `data_store/knowledge/index.json`, rebuilt
+  automatically when the PDFs change.
+- **In the flow:** analyst and reporter get `search_methodology` (budget `MAX_KNOWLEDGE_QUERIES`, default 3
+  per run). Each passage gets a run-wide citation id `[M1]`, `[M2]`; `submit_analysis` / `submit_report` are
+  rejected if they cite an id that was not retrieved (logged as `unknown_citation_rejected`). The report gets
+  an automatic "Method notes cited" list with file and page; all retrieved passages are stored in `run.json`.
+- **In the chat:** tool `search_methodology` cites passages as `file p. N`.
+
 **2. Interactive chat agent** (`src/real_basket/agents/`, front door for ad-hoc questions)
 
 ```
@@ -65,6 +82,7 @@ Streamlit UI / CLI ──► Orchestrator Agent ("RealBasket Analyst")
                          ├─ fetch_official_cpi / calculate_essential_vs_cpi
                          ├─ fetch_regional_rents / fetch_net_salaries
                          ├─ investigate_deviation      ──► core/investigation.py
+                         ├─ search_methodology         ──► knowledge/ (method notes of reference PDFs)
                          └─ run_monitoring_flow        ──► starts the monitoring flow above
 ```
 
@@ -82,6 +100,7 @@ src/real_basket/
 │   ├── rents.py / income.py  # Ø rents, net salaries, rent burden
 │   └── settings.py      # .env based configuration incl. guardrail budgets
 ├── data/            # demo_data.py (synthetic), sources.py (source registry with alternatives)
+├── knowledge/       # RAG over reference PDFs: ingest.py (passages), search.py (index, BM25 / embeddings, CLI)
 ├── reports/pdf_report.py  # PDF generation (reportlab)
 ├── schemas/         # models.py (prices, CPI, ...), flow.py (plan, validation, audit)
 ├── ui/app.py        # Streamlit dashboard, monitoring tab with approval, agent chat
@@ -131,7 +150,16 @@ poetry run real-basket-pdf --months 60 --out reports
 poetry run real-basket-flow --trigger schedule
 poetry run real-basket-flow --trigger question --goal "Why is rent rising faster than the CPI?"
 poetry run real-basket-flow --trigger price_alert --goal "Fuel prices jumped" --approve interactive
+
+# Method notes of the reference PDFs (put them into ./reports/real-data, git-ignored)
+poetry run real-basket-knowledge --rebuild
+poetry run real-basket-knowledge --query "Ist Wohnen / Energie die Nettokaltmiete?"
+poetry run real-basket-knowledge --query "limitations of the model" --year 2026
 ```
+
+Method-note settings in `.env`: `KNOWLEDGE_DIR` (default `reports/real-data`), `KNOWLEDGE_RETRIEVER`
+(`auto` | `bm25` | `embedding`), `EMBEDDING_MODEL_ID`, `KNOWLEDGE_TOP_K` (4), `MAX_KNOWLEDGE_QUERIES` (3).
+Without PDFs the search returns no passages and the flow runs unchanged.
 
 `--approve`: `deferred` (default, low-confidence runs wait for approval in the dashboard), `interactive`
 (ask in the terminal) or `auto` (demo only). Guardrails are configurable in `.env`: `MAX_SOURCE_ATTEMPTS`,
@@ -148,7 +176,7 @@ validation loop is exercised; set `DEMO_FAULT_SEED` for reproducible demos, `DEM
 | Categories | Index per category (food, rent, energy, mobility) |
 | 🏠 Miete regional | Rent per m² per state / city: current, Ø period, YoY, comparison chart, Ø per year |
 | 💶 Nettogehalt | Ø net salary per state, rent burden with flat-size slider, tables per year |
-| 🔄 Monitoring runs | Start a monitoring flow run, see path / datasets / report per run, approve or reject pending runs, audit trail |
+| 🔄 Monitoring runs | Start a monitoring flow run, see path / datasets / report per run, approve or reject pending runs, audit trail, method-note search and retrieved / cited notes per run |
 | 🤖 Ask the agent | Chat with the RealBasket agent |
 
 ### PDF reports

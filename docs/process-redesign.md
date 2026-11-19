@@ -9,7 +9,7 @@ RealBasket has two entry points that share the same deterministic calculation co
 
 | Entry point | Behaviour | Orchestration |
 |-------------|-----------|---------------|
-| **Chat agent** `REALBASKET-ORCHESTRATOR` (dashboard chat tab, `real-basket-cli`) | Answers questions with tools (prices, essential vs CPI, regional rents, net salaries, `investigate_deviation`). Can start a monitoring run (`run_monitoring_flow`) when the user explicitly asks for fresh, validated data | Classic LLM orchestrator: the model decides which tools to call |
+| **Chat agent** `REALBASKET-ORCHESTRATOR` (dashboard chat tab, `real-basket-cli`) | Answers questions with tools (prices, essential vs CPI, regional rents, net salaries, `investigate_deviation`, `search_methodology` for method notes of the reference PDFs). Can start a monitoring run (`run_monitoring_flow`) when the user explicitly asks for fresh, validated data | Classic LLM orchestrator: the model decides which tools to call |
 | **Monitoring flow** (`real-basket-flow`, dashboard tab **🔄 Monitoring runs**, chat tool) | Collects, validates, calculates, investigates and publishes one validated essential index per run | A Strands `Graph`: 5 LLM agents + 7 deterministic function nodes; routing is code (`RunContext.next_after_*`) |
 
 Triggers of the monitoring flow: `schedule`, `question`, `price_alert` (`--trigger`). There is no scheduler yet;
@@ -75,17 +75,38 @@ flowchart TD
     DS -.->|"last validated data (re-use / fallback)"| PG
     VA -.->|"source reliability"| MEM
     MEM -.->|"informs next plan"| PL
+    KB[("knowledge index<br/>method notes of reference PDFs<br/>reports/real-data")]
+    KB -.->|"search_methodology<br/>cite as [M1] (context only)"| AN
+    KB -.->|"search_methodology<br/>cite as [M1] (context only)"| RE
 
     classDef agent fill:#dbeafe,stroke:#2563eb,color:#000
     classDef code fill:#f3f4f6,stroke:#6b7280,color:#000
     classDef human fill:#fef3c7,stroke:#d97706,color:#000
     class PL,CO,VA,AN,RE agent
-    class PG,QC,VG,CA,RG,PU code
+    class PG,QC,VG,CA,RG,PU,KB code
     class HR,HA,PEN human
 ```
 
 Blue = LLM agent, grey = deterministic code, yellow = human. Every node and decision is written to `audit.jsonl`;
 the run summary is added to `memory.json` at the end of every run (also failed ones).
+
+### Method notes from reference documents (RAG)
+
+Analyst and reporter can retrieve method notes and caveats from the reference PDFs in `KNOWLEDGE_DIR`
+(default `reports/real-data`, e.g. "Wohnen / Energie ist keine Nettokaltmiete"). This is the only retrieval-augmented
+part of the system and it supplies **context, never numbers**:
+
+| Step | Implementation (`src/real_basket/knowledge/`) |
+|------|-----------------------------------------------|
+| Ingest | pypdf text extraction; repeated headers / page numbers removed; prose → `note` passages, tables → only their *non-numeric* cells (`table` passages); numeric cells are dropped; identical passages of several yearly reports are stored once with all locations |
+| Index | `data_store/knowledge/index.json`, rebuilt automatically when a PDF changes (size / mtime) |
+| Retrieval | `bm25` (offline, German stemming, compounds, English → German glossary) or `embedding` (OpenAI, fused with BM25 via RRF); `auto` = embedding if an API key is set, embedding errors fall back to BM25 |
+| Budget | `MAX_KNOWLEDGE_QUERIES` (3) searches per run, `KNOWLEDGE_TOP_K` (4) passages per search |
+| Citation check | Each retrieved passage gets a run-wide id `[M1]`, `[M2]`; `submit_analysis` / `submit_report` are rejected when they cite an id that was not retrieved in this run (`unknown_citation_rejected`) |
+| Output | The release gate appends "Method notes cited" (file, page, section); all retrieved passages are stored in `run.json` and shown in the dashboard |
+
+Without reference documents the search returns no passages and the flow runs unchanged. The chat agent has the
+same search as tool `search_methodology` (citations as `file p. N`).
 
 ### Why this flow is non-deterministic
 
@@ -146,6 +167,7 @@ fails the quality rules is not re-used (`reuse_unavailable` in the audit trail);
 | Incomparable index | Complete-basket rule (section 3) |
 | Misleading conclusions | Demo-data note, provenance footer and disclaimer ("a deviation does not mean the CPI is wrong") are appended by code — the reporter cannot drop them |
 | Low-confidence results | Confidence computed in code: minimum of reporter, analyst and data quality scores, −0.05 per carried-forward dataset, −0.10 per fallback dataset, −0.10 per human override. Below `CONFIDENCE_THRESHOLD` (0.7) or with fallback data a human must approve |
+| Invented sources / figures from text | Method-note citations are checked against the passages retrieved in the run; numeric table cells are not indexed; prompts forbid taking figures from passages; search budget per run |
 | Traceability | `audit.jsonl` per run: plan, amendments, fetches, quality checks, validator decisions, gates, re-use, investigations, human decisions (incl. reject with reason) |
 
 Human-in-the-loop is a pluggable approver (`--approve deferred | interactive | auto`):
@@ -160,6 +182,7 @@ dashboard; `interactive` asks on the CLI; `auto` approves everything (demo / tes
 | Deterministic gates and calculation as graph nodes | Custom `FunctionNode(MultiAgentBase)` wrapping `flow/steps.py` | ✅ implemented |
 | Agent tools sharing the run state | `@tool` functions per role (`flow/tools.py`) on a shared `RunContext` | ✅ implemented |
 | Chat agent starting a monitoring run | Tool `run_monitoring_flow` of `REALBASKET-ORCHESTRATOR` | ✅ implemented |
+| Method notes for analyst / reporter (RAG) | `@tool search_methodology` on own `KnowledgeBase` (BM25 / embeddings); no Strands retrieval tool / vector store | ✅ implemented |
 | Human review / approval | Own approver callback + dashboard; Strands **interrupts** not used yet | ⚠️ partial |
 | Memory across runs | Own `Memory` class (`data_store/memory.json`); no Strands session manager | ⚠️ own implementation |
 | One collector per category / hand-offs between collectors | Single collector agent for all datasets; no Swarm, no parallel collectors | ❌ open |
@@ -181,6 +204,7 @@ tests (`tests/test_flow.py`, scripted agents instead of LLMs) recompute the resu
 | Native Strands interrupts | Replace the approver callback for human review / approval |
 | Parallel / specialised collectors | One collector per category, possibly as a Swarm |
 | Confidence tuning | Live runs tend to land close to the 0.7 threshold |
+| Figures from reference PDFs | The tables of `reports/real-data` (monthly basket, city rents) are not imported as a data source yet; only their method notes are searchable |
 | Storage backend | JSON files are fine for a single user; SQLite / PostgreSQL for concurrent or shared use |
 
 ## 8. Starting point before the redesign (historical)
