@@ -5,20 +5,19 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class Category(str, Enum):
+    """Expenditure groups of the ECLI reference basket (reports/real-data)."""
+
     FOOD = "food"
-    RENT = "rent"
-    ENERGY = "energy"
+    HOUSING_ENERGY = "housing_energy"     # "Wohnen / Energie" - more than the net cold rent
     MOBILITY = "mobility"
-    # categories of the ECLI reference basket (reports/real-data): "Wohnen / Energie" is one group there
-    HOUSING_ENERGY = "housing_energy"
     HEALTH = "health"
     COMMUNICATION = "communication"
 
 
 CATEGORY_LABEL_DE = {
-    Category.FOOD: "Lebensmittel", Category.RENT: "Miete", Category.ENERGY: "Energie",
-    Category.MOBILITY: "Verkehr / Mobilität", Category.HOUSING_ENERGY: "Wohnen / Energie",
-    Category.HEALTH: "Gesundheit", Category.COMMUNICATION: "Kommunikation",
+    Category.FOOD: "Lebensmittel", Category.HOUSING_ENERGY: "Wohnen / Energie",
+    Category.MOBILITY: "Verkehr / Mobilität", Category.HEALTH: "Gesundheit",
+    Category.COMMUNICATION: "Kommunikation",
 }
 
 
@@ -34,22 +33,16 @@ class PricePoint(BaseModel):
     period: date = Field(description="First day of the month the price refers to")
     price: float = Field(gt=0)
     unit: str = "EUR"
-    source: str = Field(default="demo", description="Origin of the price (URL, API name, 'demo')")
+    source: str = Field(description="Origin of the value, e.g. 'Lebenshaltungskosten_2026_….pdf S. 1'")
     region: str = Field(default="Deutschland", description="Region the price refers to (state or city)")
     region_type: RegionType = RegionType.NATIONAL
 
 
 class BasketWeights(BaseModel):
-    """Weights of the essential basket. Must sum to 1.0."""
+    """Weights of the essential basket. Must sum to 1.0 (default: expenditure shares of the reference basket,
+    see `RealDataset.weights`)."""
 
-    weights: dict[Category, float] = Field(
-        default_factory=lambda: {
-            Category.FOOD: 0.30,
-            Category.RENT: 0.40,
-            Category.ENERGY: 0.15,
-            Category.MOBILITY: 0.15,
-        }
-    )
+    weights: dict[Category, float]
 
     @model_validator(mode="after")
     def _check_sum(self) -> "BasketWeights":
@@ -61,18 +54,8 @@ class BasketWeights(BaseModel):
 
 class CpiPoint(BaseModel):
     period: date
-    index_value: float = Field(description="Official CPI index value (e.g. base 2020=100)")
-    source: str = "demo"
-
-
-class IncomePoint(BaseModel):
-    """Average monthly net salary (full-time employee) for a region and month."""
-
-    region: str
-    region_type: RegionType = RegionType.STATE
-    period: date
-    net_salary: float = Field(gt=0, description="Average monthly net salary in EUR")
-    source: str = "demo"
+    index_value: float = Field(description="Official CPI index value (e.g. rebased Nov 2024 = 100)")
+    source: str
 
 
 class ComparisonPoint(BaseModel):

@@ -1,23 +1,26 @@
 """Deterministic drill-down used by the chat agent's `investigate_deviation` tool:
-category -> item -> region. The agent decides *whether* and *how deep* to drill down; the numbers come from here."""
+category -> item -> region. The agent decides *whether* and *how deep* to drill down; the numbers come from here.
+All inputs are real data from the reference PDFs (reports/real-data)."""
 
 from __future__ import annotations
 
 import pandas as pd
 
 from real_basket.core.index import category_indices, compare_with_cpi, essential_index
-from real_basket.data.demo_data import demo_regional_rents
+from real_basket.data.real_data import RealDataset
 from real_basket.schemas.models import BasketWeights, CpiPoint, PricePoint, RegionType
 
+STATE_NOTE = ("Die Referenzberichte enthalten bewusst keine Miete je Bundesland: Stadtwerte begründen keinen "
+              "repräsentativen Mietwert für das gesamte Bundesland.")
 
-def deviation_breakdown(prices: list[PricePoint], cpi: list[CpiPoint], weights: BasketWeights | None = None) -> dict:
+
+def deviation_breakdown(prices: list[PricePoint], cpi: list[CpiPoint], weights: BasketWeights) -> dict:
     """Essential index vs CPI for the latest month, incl. the exact contribution of every category.
 
     contribution_pp: share of the essential YoY rate caused by the category (sums to the essential YoY).
     gap_pp: contribution minus the category's weight x CPI YoY (sums to the deviation).
     Categories are sorted by |gap_pp|, i.e. the biggest driver of the deviation comes first.
     """
-    weights = weights or BasketWeights()
     used = {c.value: w for c, w in weights.weights.items() if w > 0}
     comparison = compare_with_cpi(essential_index(prices, weights), cpi).dropna()
     if comparison.empty:
@@ -63,38 +66,27 @@ def item_changes(prices: list[PricePoint], category: str) -> list[dict]:
     return sorted(result, key=lambda d: -abs(d["yoy_pct"]))
 
 
-def real_city_rent_changes(top: int = 5) -> dict | None:
-    """Published asking rents of the 15 largest cities (reference PDF, immowelt), Jan vs. Oct 2026; None if
-    the reference PDFs are not available."""
-    from real_basket.data.real_data import RealDataError, load_real_data
-
-    try:
-        cities = load_real_data().city_rents
-    except (RealDataError, OSError, ValueError):
-        return None
-    if not cities:
-        return None
+def city_rent_changes(ds: RealDataset, top: int = 5) -> dict:
+    """Published asking rents of the 15 largest cities (reference PDF, immowelt), Jan vs. Oct 2026."""
     changes = sorted(({"region": c["city"], "bundesland": c["state"], "rent_eur_per_m2": c["rent_oct_eur_m2"],
-                       "change_pct": c["change_pct"]} for c in cities), key=lambda d: -d["change_pct"])
-    return {"region_type": "stadt", "change": "Okt 2026 vs. Jan 2026 (Angebotskaltmiete)",
-            "strongest": changes[:top], "weakest": changes[-top:], "source": cities[0]["source"]}
+                       "change_pct": c["change_pct"]} for c in ds.city_rents), key=lambda d: -d["change_pct"])
+    return {"region_type": RegionType.CITY.value, "change": "Okt 2026 vs. Jan 2026 (Angebotskaltmiete)",
+            "strongest": changes[:top], "weakest": changes[-top:],
+            "source": ds.city_rents[0]["source"] if ds.city_rents else None}
 
 
-def regional_rent_changes(region_type: str = "bundesland", months: int = 13, top: int = 5,
-                          use_real: bool = True) -> dict:
-    """Regions with the strongest / weakest rent increase. Cities: real asking rents from the reference PDF if
-    available and `use_real`; federal states: demo data (the reference PDFs contain no verified state series)."""
-    if use_real and region_type == RegionType.CITY.value and (real := real_city_rent_changes(top)):
-        return real
-    rents = demo_regional_rents(months=max(months, 13), region_type=RegionType(region_type))
-    by_region: dict[str, list] = {}
-    for p in rents:
-        by_region.setdefault(p.region, []).append(p)
-    changes = []
-    for region, pts in by_region.items():
-        pts.sort(key=lambda p: p.period)
-        changes.append({"region": region, "rent_eur_per_m2": round(pts[-1].price, 2),
-                        "change_pct": round((pts[-1].price / pts[-13].price - 1) * 100, 2)})
-    changes.sort(key=lambda d: -d["change_pct"])
-    return {"region_type": region_type, "change": "ggü. Vorjahresmonat", "strongest": changes[:top],
-            "weakest": changes[-top:], "source": "demo"}
+def state_rent_coverage(ds: RealDataset) -> list[dict]:
+    """Per federal state: no verified rent series; the cities of that state with published rents (if any)."""
+    by_city = {c["city"]: c for c in ds.city_rents}
+    return [{"bundesland": s["state"], "verified_state_series": False, "status": s["status"],
+             "cities": [{"city": name, "rent_eur_per_m2": by_city[name]["rent_oct_eur_m2"],
+                         "change_pct": by_city[name]["change_pct"]} for name in s["cities"] if name in by_city],
+             "source": s["source"]} for s in ds.state_coverage]
+
+
+def regional_rent_changes(ds: RealDataset, region_type: str = "stadt", top: int = 5) -> dict:
+    """Cities: strongest / weakest rent increase. Federal states: coverage only (no state rents in the sources)."""
+    if RegionType(region_type) == RegionType.STATE:
+        return {"region_type": RegionType.STATE.value, "verified_state_series": False, "note": STATE_NOTE,
+                "coverage": state_rent_coverage(ds)}
+    return city_rent_changes(ds, top)

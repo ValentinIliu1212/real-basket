@@ -6,10 +6,13 @@ The numbers are parsed DETERMINISTICALLY from the PDF tables (no LLM, no text se
 - Monatliche modellierte Kosten: EUR per group and month (-> PricePoint, one item per group)
 - ECLI vs. VPI: official CPI rebased to November 2024 = 100 (-> CpiPoint)
 - 15 Großstädte: published asking rents (immowelt), January vs. October 2026
+- Bundesland-Abdeckung: per federal state, which cities have published rents ("Nur ausgewählte Städte: …") or
+  "Keine verifizierte Monatsreihe" - the reports deliberately give NO rent per federal state
 
 Rechecks (see `RealDataset.checks`): base amounts add up to the printed total, row sums, the ECLI recomputed by the
 RealBasket engine equals the printed ECLI, the printed ECLI annual rate, the two ECLI tables agree, the monthly
-series has no gaps and months repeated in several reports carry identical values.
+series has no gaps, months repeated in several reports carry identical values, the city rent changes and 75 m²
+rents are recomputed, and the federal-state coverage lists exactly the cities of the rent table.
 """
 
 from __future__ import annotations
@@ -35,6 +38,12 @@ GROUPS: dict[str, Category] = {
     "Kommunikation": Category.COMMUNICATION,
 }
 GROUP_NAME = {cat: name for name, cat in GROUPS.items()}
+STATES = ["Baden-Württemberg", "Bayern", "Berlin", "Brandenburg", "Bremen", "Hamburg", "Hessen",
+          "Mecklenburg-Vorpommern", "Niedersachsen", "Nordrhein-Westfalen", "Rheinland-Pfalz", "Saarland", "Sachsen",
+          "Sachsen-Anhalt", "Schleswig-Holstein", "Thüringen"]
+NO_STATE_SERIES = "Keine verifizierte Monatsreihe"
+CITIES_ONLY = "Nur ausgewählte Städte:"
+CITY_FLAT_M2 = 75
 
 _MONTH = re.compile(r"^(" + "|".join(MONTHS_DE) + r") (\d{4})$")
 _EUR = re.compile(r"^-?\d{1,3}(?:\.\d{3})*,\d{2} €$")
@@ -64,6 +73,7 @@ class RealDataset:
     printed_ecli_yoy: dict[date, float]
     city_rents: list[dict]
     documents: list[str]
+    state_coverage: list[dict] = field(default_factory=list)
     checks: list[Check] = field(default_factory=list)
 
     @property
@@ -105,7 +115,8 @@ def parse_document(path: Path) -> dict:
 
     lines = [(page, ln) for page, page_lines in enumerate(extract_pages(path), 1) for ln in page_lines]
     text = [ln for _, ln in lines]
-    out: dict = {"file": path.name, "base": {}, "base_total": None, "costs": {}, "vpi": {}, "cities": []}
+    out: dict = {"file": path.name, "base": {}, "base_total": None, "costs": {}, "vpi": {}, "cities": [],
+                 "states": {}}
     order: list[str] | None = None
     for i, (page, line) in enumerate(lines):
         nxt = text[i + 1:i + 8]
@@ -138,8 +149,13 @@ def parse_document(path: Path) -> dict:
                 and _RATE.match(nxt[4]):
             jan, okt = parse_number(nxt[0]), parse_number(nxt[1])
             out["cities"].append({"city": c.group(1), "state": c.group(2), "rent_jan_eur_m2": jan,
-                                  "rent_oct_eur_m2": okt, "change_pct": parse_number(nxt[4]),
+                                  "rent_oct_eur_m2": okt, "rent_jan_flat_eur": parse_number(nxt[2]),
+                                  "rent_oct_flat_eur": parse_number(nxt[3]), "change_pct": parse_number(nxt[4]),
                                   "source": f"{path.name} S. {page} (immowelt Mietkompass)"})
+        elif line in STATES and nxt and (nxt[0] == NO_STATE_SERIES or nxt[0].startswith(CITIES_ONLY)):
+            cities = [x.strip() for x in nxt[0][len(CITIES_ONLY):].split(",")] if nxt[0] != NO_STATE_SERIES else []
+            out["states"][line] = {"state": line, "cities": cities, "verified_state_series": False,
+                                   "status": nxt[0], "source": f"{path.name} S. {page}"}
     return out
 
 
@@ -211,9 +227,26 @@ def build_dataset(docs: list[dict]) -> RealDataset:
                         f"{len(vpi)} von {len(periods)} Monaten"))
 
     cities = next((d["cities"] for d in reversed(docs) if d["cities"]), [])
+    change_diff = max((abs((c["rent_oct_eur_m2"] / c["rent_jan_eur_m2"] - 1) * 100 - c["change_pct"])
+                       for c in cities), default=0.0)
+    flat_diff = max((max(abs(c["rent_jan_eur_m2"] * CITY_FLAT_M2 - c["rent_jan_flat_eur"]),
+                         abs(c["rent_oct_eur_m2"] * CITY_FLAT_M2 - c["rent_oct_flat_eur"])) for c in cities),
+                    default=0.0)
+    checks.append(Check("Stadtmieten nachgerechnet (Änderung, 75 m²)",
+                        bool(cities) and change_diff <= 0.1 and flat_diff <= 0.01,
+                        f"{len(cities)} Städte, max. Abweichung {change_diff:.3f} PP bzw. {flat_diff:.3f} €"
+                        if cities else "keine Stadtmieten gefunden"))
+    # latest report that lists the coverage per federal state (the 2026 report names the cities with rents)
+    states = next((d["states"] for d in reversed(docs) if any(s["cities"] for s in d["states"].values())),
+                  next((d["states"] for d in reversed(docs) if d["states"]), {}))
+    covered = {(c, s["state"]) for s in states.values() for c in s["cities"]}
+    coverage_ok = set(states) == set(STATES) and covered == {(c["city"], c["state"]) for c in cities}
+    checks.append(Check("Bundesland-Abdeckung passt zur Städtetabelle", coverage_ok,
+                        f"{len(states)} Bundesländer, {sum(bool(s['cities']) for s in states.values())} mit "
+                        f"Städtewerten, {sum(not s['cities'] for s in states.values())} ohne verifizierte Reihe"))
     return RealDataset(prices=prices, cpi=cpi, base_amounts=base_cat, base_total=total, printed_ecli=printed_ecli,
                        printed_ecli_yoy=printed_yoy, city_rents=cities, documents=[d["file"] for d in docs],
-                       checks=checks)
+                       state_coverage=[states[s] for s in STATES if s in states], checks=checks)
 
 
 def real_data_dir() -> Path:

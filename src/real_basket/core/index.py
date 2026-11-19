@@ -27,9 +27,8 @@ def category_indices(prices: list[PricePoint], base_period: str | None = None) -
     return df.pivot_table(index="period", columns="category", values="relative", aggfunc="mean").sort_index()
 
 
-def essential_index(prices: list[PricePoint], weights: BasketWeights | None = None) -> pd.Series:
+def essential_index(prices: list[PricePoint], weights: BasketWeights) -> pd.Series:
     """Weighted essential living cost index (base period = 100)."""
-    weights = weights or BasketWeights()
     cat = category_indices(prices)
     w = pd.Series({k.value: v for k, v in weights.weights.items()})
     w = w.reindex(cat.columns).fillna(0)

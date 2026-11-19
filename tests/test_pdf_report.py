@@ -1,6 +1,10 @@
-from datetime import date
+from pathlib import Path
 
-from real_basket.reports.pdf_report import format_eur, generate_yearly_price_reports
+import pytest
+
+from real_basket.reports.pdf_report import format_eur, generate_all
+
+REAL_DOCS = Path(__file__).resolve().parents[1] / "reports" / "real-data"
 
 
 def test_format_eur():
@@ -8,7 +12,10 @@ def test_format_eur():
     assert format_eur(0.4) == "0,400 €"
 
 
-def test_one_pdf_per_year(tmp_path):
-    files = generate_yearly_price_reports(tmp_path, months=60, end=date(2026, 11, 1))
-    assert [f.name for f in files] == [f"realbasket_preise_{y}.pdf" for y in range(2021, 2027)]
+@pytest.mark.skipif(not REAL_DOCS.is_dir(), reason="reference PDFs not available")
+def test_reports_from_real_data(tmp_path):
+    files = generate_all(tmp_path)
+    assert [f.name for f in files] == ["realbasket_preise_2024.pdf", "realbasket_preise_2025.pdf",
+                                       "realbasket_preise_2026.pdf", "realbasket_miete_staedte.pdf",
+                                       "realbasket_verbraucherpreisindex.pdf"]
     assert all(f.stat().st_size > 0 for f in files)

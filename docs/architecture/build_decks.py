@@ -193,13 +193,14 @@ def current_deck() -> Presentation:
     bullets(s, 0.5, 1.3, 8.0, 5.6, [
         "Index der Grundlebenshaltungskosten (ECLI-Warenkorb, 5 Ausgabengruppen) vs. amtlicher VPI",
         "Echte Daten: deterministisch aus den PDF-Tabellen in reports/real-data geparst",
-        ("9 Nachrechen-Prüfungen (Summen, Lücken, ECLI-Neuberechnung, Jahresraten, VPI)", 1),
+        ("11 Nachrechen-Prüfungen (Summen, Lücken, ECLI, Jahresraten, VPI, Stadtmieten, Länder)", 1),
+        ("Keine Demo-Daten, kein Fallback: ohne PDFs Fehlermeldung statt Zahlen", 1),
         "Einflussfaktoren: Beitrag jeder Ausgabengruppe zur Abweichung in Prozentpunkten",
+        "Mieten der 15 größten Städte (Jan vs. Okt 2026); je Bundesland nur Abdeckung",
         "Methodenhinweise per RAG (BM25 + Embeddings), Zitate mit Datei und Seite",
         "Chat mit RealBasket: Strands-Agent auf Azure OpenAI (gpt-4o), Antworten auf Deutsch",
         "Grundsatz: Zahlen nur aus deterministischen Tools – das LLM rechnet nie selbst",
-        "Disclaimer immer sichtbar; Datenquelle (echt / Demo) wählbar",
-    ], 17)
+    ], 16)
     box(s, 8.9, 1.5, 3.9, 3.6, "Ergebnis 10/2026 (echte Daten)",
         ["", "Grundbedarf: +2,93 %", "VPI: +2,83 %", "Abweichung: +0,11 PP", "",
          "Größter Einflussfaktor:", "Verkehr / Mobilität (+0,94 PP)"], TEAL, size=17)
@@ -207,8 +208,8 @@ def current_deck() -> Presentation:
 
     s = slide(prs, "Komponenten", "Ein Python-Prozess: Streamlit hostet Dashboard und Agenten; nur das LLM ist extern")
     box(s, 0.5, 1.35, 12.3, 0.7, "Streamlit-UI  (ui/app.py)",
-        ["Index vs. VPI · Einflussfaktoren · Miete regional · Nettogehalt · Methodenhinweise · "
-         "Chat mit RealBasket · Sidebar: Datenquelle & Gewichte"], NAVY, size=14)
+        ["Index vs. VPI · Einflussfaktoren · Miete Städte · Methodenhinweise · "
+         "Chat mit RealBasket · Sidebar: Gewichte & PDF-Berichte"], NAVY, size=14)
     box(s, 0.5, 2.4, 4.0, 1.0, "Orchestrator-Agent (Strands)",
         ["REALBASKET-ORCHESTRATOR · agents/orchestrator.py"], TEAL)
     box(s, 5.0, 2.4, 3.6, 1.0, "Price-Collector-Sub-Agent",
@@ -217,15 +218,15 @@ def current_deck() -> Presentation:
         ["gpt-4o (Completion)", "text-embedding-3-large"], ORANGE)
     box(s, 0.5, 3.75, 4.0, 1.0, "Agent-Tools  (agents/tools.py)",
         ["fetch_prices · fetch_official_cpi · calculate_essential_vs_cpi · investigate_deviation · "
-         "fetch_regional_rents · fetch_net_salaries · search_methodology"], SAND, size=12)
+         "fetch_regional_rents · search_methodology"], SAND, size=12)
     box(s, 5.0, 3.75, 3.6, 1.0, "Prompts  (agents/prompts.py)",
-        ["Deutsch · Disclaimer · Datenquelle aus der Sidebar"], LIGHT, border=GREY, size=12)
+        ["Deutsch · Disclaimer · nur echte Daten, keine Schätzungen"], LIGHT, border=GREY, size=12)
     box(s, 9.4, 3.75, 3.4, 1.0, "PDF-Berichte",
         ["reports/pdf_report.py (reportlab)"], LIGHT, border=GREY, size=12)
     box(s, 0.5, 5.05, 2.55, 1.05, "Rechenkern  core/",
-        ["index · investigation", "rents · income"], LIGHT, border=NAVY, size=12)
+        ["index.py", "investigation.py"], LIGHT, border=NAVY, size=12)
     box(s, 3.25, 5.05, 2.6, 1.05, "Daten  data/",
-        ["basket.py (DATA_SOURCE)", "real_data.py · demo_data.py"], LIGHT, border=NAVY, size=12)
+        ["real_data.py (Parser + Prüfungen)", "basket.py (nur echte Daten)"], LIGHT, border=NAVY, size=12)
     box(s, 6.05, 5.05, 2.55, 1.05, "Wissensbasis  knowledge/",
         ["ingest · BM25 + Embedding", "(RRF) · index.json"], LIGHT, border=NAVY, size=12)
     box(s, 9.4, 5.05, 3.4, 1.05, "Konfiguration",
@@ -250,7 +251,7 @@ def current_deck() -> Presentation:
               "Beispiel: „Steigen die Grundlebenshaltungskosten stärker als der VPI?“")
     flow(s, [
         ("Frage", ["Nutzer fragt im Tab", "„Chat mit RealBasket“"]),
-        ("Orchestrator", ["Streamlit ruft den Agenten", "in-process auf – mit Daten-", "quelle aus der Sidebar"]),
+        ("Orchestrator", ["Streamlit ruft den Agenten", "in-process auf (eine", "Sitzung, Folgefragen)"]),
         ("Planung", ["gpt-4o wählt die Tools", "(Function Calling)"]),
         ("Rechnen", ["Tools rechnen deterministisch", "(core/, data/) bzw. suchen", "Hinweise (knowledge/)"]),
         ("Sub-Agent", ["Price-Collector fasst", "Preise je Ausgabengruppe", "zusammen"]),
@@ -259,7 +260,8 @@ def current_deck() -> Presentation:
     bullets(s, 0.5, 4.5, 12.3, 2.4, [
         "Dashboard-Tabs (Index vs. VPI, Einflussfaktoren) rufen core/ und data/ direkt auf – ohne LLM, "
         "deshalb identische Zahlen in Dashboard und Chat",
-        "Datenquellen-Wechsel in der Sidebar startet einen neuen Chat – echte und Demo-Zahlen werden nie gemischt",
+        "Nur echte Daten: Mieten je Bundesland und Nettogehälter sind nicht in den Quellen – der Agent sagt das, "
+        "statt zu schätzen",
         "Unveränderte Gewichts-Regler → exakte Warenkorbgewichte aus den PDFs",
     ], 16)
 
@@ -269,8 +271,8 @@ def current_deck() -> Presentation:
     textbox(s, 2.7, 4.55, 10, 0.4, "Hinweispfad (RAG)", 15, PURPLE, True)
     num = [("Text extrahieren", ["ingest.extract_pages", "(pypdf)"]),
            ("Tabellen parsen", ["Basiswarenkorb · Monats-", "kosten · ECLI/VPI · Mieten"]),
-           ("9 Prüfungen", ["Summen · Lücken · ECLI", "neu berechnet · VPI"]),
-           ("Warenkorb", ["load_basket()", "auto | real | demo"]),
+           ("11 Prüfungen", ["Summen · Lücken · ECLI", "VPI · Mieten · Länder"]),
+           ("Warenkorb", ["load_basket()", "nur echte Daten"]),
            ("Rechenkern", ["Index · Abweichung", "Einflussfaktoren"])]
     rag = [("Passagen", ["Hinweise + Text-", "Tabellenzellen"]),
            ("Bereinigen", ["Zahlen verworfen,", "Duplikate zusammengeführt"]),
@@ -284,8 +286,8 @@ def current_deck() -> Presentation:
             if i:
                 arrow(s, x - 0.25, y + 0.65, x, y + 0.65, NAVY)
         arrow(s, 2.5, 3.55, 3.0, y + 0.65, NAVY)
-    textbox(s, 3.0, 3.2, 9.8, 0.6, "Fallback: PDFs nicht lesbar oder Prüfung fehlgeschlagen → Demo-Daten "
-            "(DATA_SOURCE=auto), klar als „Demo-Daten“ gekennzeichnet", 12, GREY)
+    textbox(s, 3.0, 3.2, 9.8, 0.6, "Kein Fallback: PDFs fehlen oder nicht lesbar → RealDataError; Dashboard "
+            "zeigt den Fehler, Tools liefern {\"error\": …} – es gibt keine Demo-Daten", 12, GREY)
     textbox(s, 3.0, 6.4, 9.8, 0.6, "Ohne LLM-Zugang: reine BM25-Suche (offline) mit deutscher Stammformbildung "
             "und Glossar Englisch → Deutsch", 12, GREY)
 
@@ -298,8 +300,8 @@ def current_deck() -> Presentation:
         ["Daten", "pypdf, pandas, pydantic", "PDF-Parsing, Prüfungen, Modelle"],
         ["Wissen", "eigener BM25 + Embedding-Retriever, index.json", "Methodenhinweise mit Zitaten"],
         ["Berichte", "reportlab", "PDF-Berichte"],
-        ["Konfiguration", "pydantic-settings, .env (Projektordner)", "Azure-Einstellungen, DATA_SOURCE"],
-        ["Qualität / Build", "pytest (40 Tests), ruff, Poetry", "Tests, Lint, Abhängigkeiten"],
+        ["Konfiguration", "pydantic-settings, .env (Projektordner)", "Azure-Einstellungen, KNOWLEDGE_DIR"],
+        ["Qualität / Build", "pytest (31 Tests), ruff, Poetry", "Tests, Lint, Abhängigkeiten"],
     ], [2.3, 5.6, 4.4], size=14, row_h=0.55)
 
     s = slide(prs, "Stärken und Grenzen")
@@ -308,15 +310,17 @@ def current_deck() -> Presentation:
         "Einfach: ein Prozess, ein Deployment – ideal für die Demo",
         "Deterministische, nachgeprüfte Zahlen; LLM nur für Sprache",
         "Dashboard und Chat nutzen denselben Rechenkern",
-        "Offline-Fallback (BM25, Demo-Daten)",
-        "40 automatische Tests, Lint sauber",
+        "Nur echte, nachgerechnete Daten – keine synthetischen Werte",
+        "Offline nutzbar ohne LLM (Dashboard, BM25-Suche, PDFs)",
+        "31 automatische Tests, Lint sauber",
     ], 16)
     box(s, 6.8, 1.35, 6.0, 0.55, "Grenzen", (), ORANGE, size=16)
     bullets(s, 6.8, 2.0, 6.0, 4.9, [
         "Tools nur im eigenen Prozess nutzbar – keine Wiederverwendung durch Copilot, Claude & Co.",
         "Agent läuft im Streamlit-Prozess: skaliert nur mit der UI",
         "Sub-Agent eng gekoppelt, nicht separat versionier- oder deploybar",
-        "Datenquellen fest verdrahtet (PDF / Demo), keine Live-Anbindung (Destatis)",
+        "Datenstand fix (PDFs bis 10/2026), keine Live-Anbindung (Destatis)",
+        "Keine Mieten je Bundesland, keine Nettogehälter in den Quellen",
         "Kein Auth-/Mandantenkonzept, Schlüssel in .env",
     ], 16)
     return prs
@@ -362,13 +366,14 @@ def proposal_deck() -> Presentation:
     textbox(s, 0.5, 4.22, 12.3, 0.3, "MCP  ·  Streamable HTTP (lokal: stdio)  ·  Tools  ·  Resources  ·  Prompts",
             11, PURPLE, True)
     servers = [("realbasket-data", ["get_prices · get_cpi", "calculate_index · data_checks"]),
-               ("realbasket-analysis", ["deviation_breakdown", "regional_rents · net_salaries"]),
+               ("realbasket-analysis", ["deviation_breakdown", "city_rents · state_coverage"]),
                ("realbasket-knowledge", ["search_methodology", "Resource doc://…/seite"]),
                ("realbasket-report", ["render_pdf", "Resource report://…"]),
                ("destatis-genesis (neu)", ["get_vpi_table", "Live-VPI"])]
     for i, (t, b) in enumerate(servers):
         box(s, 0.5 + i * 2.5, 4.55, 2.3, 1.0, t, b, PURPLE, size=12)
-    sources = [("reports/real-data/*.pdf", ["ECLI 2024–2026"]), ("Demo-Daten", ["Bundesländer, Gehälter"]),
+    sources = [("reports/real-data/*.pdf", ["ECLI 2024–2026 · VPI"]), ("Stadtmieten (in den PDFs)",
+                                                                       ["15 Städte, immowelt"]),
                ("Vektorindex", ["index.json / Vector Store"]), ("Externe APIs", ["Destatis GENESIS · Mietportale"])]
     for x, (t, b) in zip((0.5, 3.6, 6.7, 9.8), sources):
         box(s, x, 5.85, 2.9, 0.65, t, b, LIGHT, border=GREY, size=12)
@@ -394,18 +399,18 @@ def proposal_deck() -> Presentation:
               "knowledge/ und reports/")
     table(s, 0.5, 1.45, 12.3, [
         ["MCP-Server", "Tools", "Resources / Prompts", "Implementierung"],
-        ["realbasket-data", "get_basket(source) · get_prices(category, months) · get_cpi(months) · "
+        ["realbasket-data", "get_basket() · get_prices(category, months) · get_cpi(months) · "
          "calculate_index(weights, months) · data_checks()", "basket://weights · basket://checks",
          "data/basket.py, data/real_data.py, core/index.py"],
-        ["realbasket-analysis", "deviation_breakdown(months) · regional_rents(level, region_type) · "
-         "net_salaries()", "–", "core/investigation.py, rents.py, income.py"],
+        ["realbasket-analysis", "deviation_breakdown(months) · item_changes(category) · city_rents(top) · "
+         "state_coverage()", "–", "core/investigation.py"],
         ["realbasket-knowledge", "search_methodology(query, year)",
          "doc://{datei}/seite/{n} · Prompt „Hinweis zitieren“", "knowledge/ingest.py, search.py"],
         ["realbasket-report", "render_pdf(kind, year)", "report://{name}.pdf", "reports/pdf_report.py"],
         ["destatis-genesis (neu)", "get_vpi_table(code, from, to)", "–", "GENESIS-API, DESTATIS_GENESIS_TOKEN"],
     ], [2.4, 4.6, 2.8, 2.5], size=12, row_h=0.75)
-    textbox(s, 0.5, 6.25, 12.3, 0.7, "Jedes Tool liefert neben den Zahlen data_source (real/demo) und die "
-            "Prüfergebnisse mit – Clients können Herkunft und Qualität immer anzeigen.", 13, GREY)
+    textbox(s, 0.5, 6.25, 12.3, 0.7, "Nur echte Daten: jedes Tool liefert Datenbasis, Quell-PDFs (Datei, Seite) und "
+            "Prüfergebnisse mit; fehlen die PDFs, kommt ein Fehler statt Zahlen.", 13, GREY)
 
     s = slide(prs, "A2A-Agenten im Detail", "Jeder Agent veröffentlicht eine Agent Card unter "
               "/.well-known/agent-card.json")
@@ -415,7 +420,7 @@ def proposal_deck() -> Presentation:
          "– (delegiert)", "Antwort auf Deutsch + Disclaimer"],
         ["Price-Collector", "Preise je Ausgabengruppe sammeln und zusammenfassen", "realbasket-data",
          "Preisübersicht je Gruppe"],
-        ["Abweichungs-Analyst", "Einflussfaktoren · regionale Mieten · Kaufkraft",
+        ["Abweichungs-Analyst", "Einflussfaktoren · Stadtmieten · Abdeckung je Bundesland",
          "realbasket-data, realbasket-analysis", "Beiträge in PP, Tabellen"],
         ["Methodik-Agent", "Methodenhinweise und Grenzen mit Zitat erklären", "realbasket-knowledge",
          "Zitate (Datei, Seite)"],
@@ -431,7 +436,7 @@ def proposal_deck() -> Presentation:
         ("Planung", ["Orchestrator liest Agent", "Cards und verteilt", "Teilaufgaben"]),
         ("Analyse", ["Abweichungs-Analyst ruft", "calculate_index und", "deviation_breakdown (MCP)"]),
         ("Methodik", ["Methodik-Agent ruft", "search_methodology (MCP),", "parallel zur Analyse"]),
-        ("Zusammenführen", ["Orchestrator kombiniert", "Artefakte, prüft", "data_source"]),
+        ("Zusammenführen", ["Orchestrator kombiniert", "Artefakte, prüft", "Quellen + Prüfungen"]),
         ("Antwort", ["Deutsch, Zahlen + Zitate,", "Disclaimer, gestreamt", "per SSE"]),
     ], y=1.7, h=2.3, fills=[NAVY, TEAL, PURPLE, PURPLE, TEAL, NAVY], size=13)
     bullets(s, 0.5, 4.5, 12.3, 2.4, [
@@ -445,7 +450,7 @@ def proposal_deck() -> Presentation:
         ["Heute", "Ziel", "Protokoll"],
         ["agents/tools.py: fetch_prices, fetch_official_cpi, calculate_essential_vs_cpi",
          "MCP-Server realbasket-data", "MCP"],
-        ["agents/tools.py: investigate_deviation, fetch_regional_rents, fetch_net_salaries",
+        ["agents/tools.py: investigate_deviation, fetch_regional_rents",
          "MCP-Server realbasket-analysis", "MCP"],
         ["agents/tools.py: search_methodology + knowledge/", "MCP-Server realbasket-knowledge (Tools + Resources)",
          "MCP"],
@@ -504,7 +509,7 @@ def proposal_deck() -> Presentation:
         ("Sicherheit", ["Entra ID / OAuth 2.1 für MCP-HTTP und A2A", "Auth-Schemata in der Agent Card",
                         "Schlüssel in Azure Key Vault statt .env", "Least Privilege je MCP-Server"], NAVY),
         ("Determinismus & Qualität", ["Zahlen nur aus MCP-Tools", "Prüfergebnisse als Resource",
-                                      "Contract-Tests je Tool-Schema", "40 bestehende Tests gegen core/"], TEAL),
+                                      "Contract-Tests je Tool-Schema", "31 bestehende Tests gegen core/"], TEAL),
         ("Betrieb", ["Je Dienst ein Container (Azure Container Apps)", "Health-Checks, unabhängige Skalierung",
                      "OpenTelemetry-Tracing über alle Hops", "Versionierte Agent Cards und Tools"], PURPLE),
     ]):
@@ -519,7 +524,7 @@ def proposal_deck() -> Presentation:
                                         "Bonus: Nutzung in Claude Desktop / VS Code"], PURPLE),
         ("Phase 2 · nach dem Hackathon", ["Collector, Analyst, Methodik als", "A2A-Dienste mit Agent Cards",
                                           "Orchestrator als A2A-Server", "Streamlit als A2A-Client"], TEAL),
-        ("Phase 3 · Produktion", ["destatis-genesis-MCP (Live-VPI)", "Report-Agent mit Artefakten",
+        ("Phase 3 · Produktion", ["destatis-genesis-MCP (Live-VPI)", "Neue Quellen: Ländermieten, Gehälter",
                                   "Entra ID, Key Vault, Container Apps", "OpenTelemetry, Monitoring"], NAVY),
     ]):
         x = 0.5 + i * 4.15
@@ -531,7 +536,7 @@ def proposal_deck() -> Presentation:
                                     "Klare Schnittstellen, gleicher Rechenkern"], 14)
     box(s, 6.8, 4.6, 6.0, 0.5, "Aufwand / Risiken", (), ORANGE, size=15)
     bullets(s, 6.8, 5.15, 6.0, 1.9, ["Mehr Dienste, mehr Betrieb", "Zusätzliche Latenz je Netzwerk-Hop",
-                                    "Auth und Versionierung nötig – für die Demo Phase 1 genügt"], 14)
+                                    "Auth und Versionierung nötig – für den Hackathon genügt Phase 1"], 14)
     return prs
 
 

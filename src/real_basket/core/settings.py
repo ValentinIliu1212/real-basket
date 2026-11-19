@@ -33,15 +33,12 @@ class Settings(BaseSettings):
     AZURE_COMPLETION_MODEL: str = ""           # chat deployment name (falls back to OPENAI_MODEL_ID)
     AZURE_EMBEDDING_MODEL: str = ""            # embedding deployment name (falls back to EMBEDDING_MODEL_ID)
 
-    DESTATIS_GENESIS_TOKEN: str = ""
-    USE_DEMO_DATA: bool = True
-    # Essential basket: auto = real data from the reference PDFs (KNOWLEDGE_DIR) if readable, else demo | real | demo
-    DATA_SOURCE: str = "auto"
+    DESTATIS_GENESIS_TOKEN: str = ""           # reserved for a live VPI collector (not used yet)
 
     DATA_DIR: str = "data_store"               # local cache (method-note index)
 
-    # --- Method notes from reference documents (RAG retrieval, see real_basket.knowledge) ---------
-    KNOWLEDGE_DIR: str = "reports/real-data"   # PDFs whose method notes / caveats are indexed
+    # --- Reference documents: source of ALL figures (tables) and of the method notes (RAG) -----------
+    KNOWLEDGE_DIR: str = "reports/real-data"   # ECLI reference PDFs
     KNOWLEDGE_RETRIEVER: str = "auto"          # bm25 | embedding | auto (embedding if OPENAI_API_KEY set)
     EMBEDDING_MODEL_ID: str = "text-embedding-3-small"
     KNOWLEDGE_TOP_K: int = 4                   # passages per search

@@ -13,7 +13,6 @@ from strands.models.openai import OpenAIModel
 from real_basket.agents.prompts import COLLECTOR_PROMPT, ORCHESTRATOR_PROMPT
 from real_basket.agents.tools import (
     calculate_essential_vs_cpi,
-    fetch_net_salaries,
     fetch_official_cpi,
     fetch_prices,
     fetch_regional_rents,
@@ -48,9 +47,8 @@ def create_model(temperature: float = 0.2) -> OpenAIModel:
 
 @tool
 def collect_category_prices(category: str) -> str:
-    """Delegate price collection for one category of the current basket (real data: 'food', 'housing_energy',
-    'mobility', 'health', 'communication'; demo data: 'food', 'rent', 'energy', 'mobility') to the specialised
-    Price Collector agent and return its summary."""
+    """Delegate price collection for one expenditure group of the reference basket ('food', 'housing_energy',
+    'mobility', 'health', 'communication') to the specialised Price Collector agent and return its summary."""
     collector = Agent(
         name="REALBASKET-COLLECTOR",
         system_prompt=COLLECTOR_PROMPT,
@@ -68,6 +66,6 @@ def create_orchestrator() -> Agent:
         system_prompt=ORCHESTRATOR_PROMPT,
         model=create_model(),
         tools=[collect_category_prices, fetch_official_cpi, calculate_essential_vs_cpi, fetch_regional_rents,
-               fetch_net_salaries, investigate_deviation, search_methodology],
+               investigate_deviation, search_methodology],
         callback_handler=None,
     )

@@ -6,7 +6,7 @@ from real_basket.agents.orchestrator import create_orchestrator
 
 
 def main() -> None:
-    prompt = " ".join(sys.argv[1:]) or "How do essential living costs compare to official inflation?"
+    prompt = " ".join(sys.argv[1:]) or "Steigen die Grundlebenshaltungskosten schneller als die Inflation?"
     print(create_orchestrator()(prompt))
 
 

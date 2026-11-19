@@ -1,12 +1,17 @@
-"""PDF-Berichte: ein PDF pro Kalenderjahr mit den Monatspreisen (EUR) der letzten N Monate.
+"""PDF-Berichte aus den echten Daten der Referenz-PDFs (reports/real-data, ECLI-Modellrechnung).
 
-Aufruf: poetry run real-basket-pdf [--months 60] [--out reports]
+- realbasket_preise_<Jahr>.pdf: modellierte Monatskosten je Ausgabengruppe (EUR/Monat), Summe, ECLI und VPI
+- realbasket_miete_staedte.pdf: Angebotsmieten der 15 größten Städte + Abdeckung je Bundesland
+- realbasket_verbraucherpreisindex.pdf: VPI vs. Grundlebenshaltungskosten-Index, Vorjahresraten, Datenprüfung
+
+Es gibt keine synthetischen Daten: fehlen die Referenz-PDFs, bricht die Erzeugung mit `RealDataError` ab.
+
+Aufruf: poetry run real-basket-pdf [--out reports]
 """
 
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
@@ -19,399 +24,199 @@ from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, 
 
 from real_basket.agents.prompts import DISCLAIMER
 from real_basket.core.index import compare_with_cpi, essential_index
-from real_basket.core.income import DEFAULT_FLAT_SIZE_M2, average_salaries, rent_burden
-from real_basket.core.rents import TOTAL_COL, average_rents, overall_average
-from real_basket.data.demo_data import demo_cpi, demo_net_salaries, demo_prices, demo_regional_rents
-from real_basket.schemas.models import Category, CpiPoint, PricePoint, RegionType
+from real_basket.core.investigation import STATE_NOTE, state_rent_coverage
+from real_basket.data.basket import Basket, RealDataError, load_basket
+from real_basket.data.real_data import CITY_FLAT_M2, MONTHS_DE
+from real_basket.schemas.models import CATEGORY_LABEL_DE
 
-MONTHS_DE = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
-CATEGORY_DE = {
-    Category.FOOD: "Lebensmittel",
-    Category.RENT: "Miete",
-    Category.ENERGY: "Energie",
-    Category.MOBILITY: "Mobilität",
-    Category.HOUSING_ENERGY: "Wohnen / Energie",
-    Category.HEALTH: "Gesundheit",
-    Category.COMMUNICATION: "Kommunikation",
-}
+__all__ = ["RealDataError", "format_eur", "generate_all", "generate_cpi_report", "generate_rent_report",
+           "generate_yearly_price_reports"]
 
-
-def _shift_months(d: date, delta: int) -> date:
-    idx = d.year * 12 + d.month - 1 + delta
-    return date(idx // 12, idx % 12 + 1, 1)
+BLUE, GREY = colors.HexColor("#0072BC"), colors.HexColor("#5A6772")
+PAGE_W = landscape(A4)[0] - 2 * cm
 
 
 def format_eur(value: float) -> str:
-    """Deutsches Format: 1.234,56 € (Preise < 1 € mit 3 Nachkommastellen)."""
-    decimals = 3 if value < 1 else 2
+    """Deutsches Format: 1.234,56 € (Werte < 1 € mit 3 Nachkommastellen)."""
+    decimals = 3 if abs(value) < 1 else 2
     s = f"{value:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"{s} €"
 
 
-def _build_year_pdf(year: int, prices: list[PricePoint], cpi: list[CpiPoint], out_file: Path,
-                    is_demo: bool, regional_rents: list[PricePoint] | None = None) -> None:
-    styles = getSampleStyleSheet()
-    months = sorted({p.period for p in prices})
-    header = ["Kategorie", "Position"] + [MONTHS_DE[m.month - 1] for m in months]
+def _num(value: float, digits: int = 1) -> str:
+    return f"{value:,.{digits}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    by_item: dict[tuple[Category, str], dict[date, float]] = defaultdict(dict)
-    for p in prices:
-        by_item[(p.category, p.item)][p.period] = p.price
 
-    rows = [header]
-    for (cat, item), values in sorted(by_item.items(), key=lambda kv: (list(Category).index(kv[0][0]), kv[0][1])):
-        rows.append([CATEGORY_DE[cat], item] + [format_eur(values[m]) if m in values else "–" for m in months])
+def _pct(value: float | None, sign: bool = False) -> str:
+    if value is None or pd.isna(value):
+        return "–"
+    return f"{'+' if sign and value >= 0 else ''}{_num(value)} %"
 
-    cpi_by_month = {c.period: c.index_value for c in cpi}
-    cpi_row = ["VPI (offiziell)", "Indexwert"] + [
-        f"{cpi_by_month[m]:.1f}".replace(".", ",") if m in cpi_by_month else "–" for m in months
+
+def _table(rows: list[list[str]], widths: list[float], header: colors.Color = BLUE,
+           bold_last: bool = False, font_size: float = 8, align_left: bool = False) -> Table:
+    t = Table(rows, colWidths=widths, repeatRows=1)
+    style = [
+        ("FONT", (0, 0), (-1, -1), "Helvetica", font_size),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", font_size),
+        ("BACKGROUND", (0, 0), (-1, 0), header),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("ALIGN", (1, 0), (-1, -1), "LEFT" if align_left else "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F6FA")]),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
     ]
+    if bold_last:
+        style += [("FONT", (0, -1), (-1, -1), "Helvetica-Bold", font_size),
+                  ("LINEABOVE", (0, -1), (-1, -1), 1, header)]
+    t.setStyle(TableStyle(style))
+    return t
 
-    first_col_w, second_col_w = 2.6 * cm, 5.2 * cm
-    month_w = (landscape(A4)[0] - 2 * cm - first_col_w - second_col_w) / max(len(months), 1)
-    col_widths = [first_col_w, second_col_w] + [month_w] * len(months)
 
-    def styled(data: list[list[str]], header_color: colors.Color, widths: list[float] | None = None) -> Table:
-        t = Table(data, colWidths=widths or col_widths, repeatRows=1)
-        t.setStyle(TableStyle([
-            ("FONT", (0, 0), (-1, -1), "Helvetica", 7.5),
-            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8),
-            ("BACKGROUND", (0, 0), (-1, 0), header_color),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F6FA")]),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
-        ]))
-        return t
-
-    period_txt = f"{MONTHS_DE[months[0].month - 1]} – {MONTHS_DE[months[-1].month - 1]} {year}"
-    story = [
-        Paragraph(f"RealBasket – Preise für Grundbedarf {year}", styles["Title"]),
-        Paragraph(f"Zeitraum: {period_txt} · Alle Preise in Euro (EUR) · Erstellt am "
+def _header(title: str, basket: Basket, styles) -> list:
+    return [
+        Paragraph(title, styles["Title"]),
+        Paragraph(f"Datenbasis: {basket.label} · echte Daten aus den Referenz-PDFs · Erstellt am "
                   f"{date.today():%d.%m.%Y}", styles["Normal"]),
-    ]
-    if is_demo:
-        story.append(Paragraph("<font color='#C0392B'><b>Hinweis: Synthetische Demo-Daten – keine echten "
-                               "Marktpreise.</b></font>", styles["Normal"]))
-    story += [
+        Paragraph("Quellen: " + ", ".join(basket.real.documents), styles["Normal"]),
         Spacer(1, 0.4 * cm),
-        styled(rows, colors.HexColor("#0072BC")),
-        Spacer(1, 0.5 * cm),
-        styled([header[:2] + header[2:], cpi_row], colors.HexColor("#5A6772")),
-        Spacer(1, 0.5 * cm),
-        Paragraph(DISCLAIMER, styles["Italic"]),
     ]
 
-    # --- Miete regional: Bundesländer und größte Städte ---------------------------------------
-    reg_first_w, reg_avg_w = 4.0 * cm, 2.2 * cm
-    reg_month_w = (landscape(A4)[0] - 2 * cm - reg_first_w - reg_avg_w) / max(len(months), 1)
-    reg_widths = [reg_first_w, reg_avg_w] + [reg_month_w] * len(months)
-    for rtype, title in ((RegionType.STATE, "Miete pro m² (nettokalt) nach Bundesland"),
-                         (RegionType.CITY, "Miete pro m² (nettokalt) in den größten Städten")):
-        regional = [p for p in (regional_rents or []) if p.region_type == rtype]
-        if not regional:
-            continue
-        by_region: dict[str, dict[date, float]] = defaultdict(dict)
-        for p in regional:
-            by_region[p.region][p.period] = p.price
-        reg_header = ["Region", "Ø Jahr"] + [MONTHS_DE[m.month - 1] for m in months]
-        reg_rows = [reg_header]
-        # sortiert nach letztem Monatswert, teuerste Region zuerst
-        for region, values in sorted(by_region.items(), key=lambda kv: -kv[1].get(months[-1], 0)):
-            vals = [values[m] for m in months if m in values]
-            reg_rows.append([region, format_eur(sum(vals) / len(vals))]
-                            + [format_eur(values[m]) if m in values else "–" for m in months])
-        # Durchschnitt über alle Regionen (ungewichtet)
-        month_avgs = [sum(v[m] for v in by_region.values() if m in v) / len(by_region) for m in months]
-        reg_rows.append(["Ø alle Regionen", format_eur(sum(month_avgs) / len(month_avgs))]
-                        + [format_eur(a) for a in month_avgs])
-        reg_table = styled(reg_rows, colors.HexColor("#0072BC"), reg_widths)
-        reg_table.setStyle(TableStyle([("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 7.5),
-                                       ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#0072BC"))]))
-        story += [
-            PageBreak(),
-            Paragraph(f"{title} – {year}", styles["Heading2"]),
-            Paragraph(f"Zeitraum: {period_txt} · Angaben in EUR pro m² Wohnfläche, Angebotsmieten",
-                      styles["Normal"]),
-            Spacer(1, 0.3 * cm),
-            reg_table,
+
+def _build(out_file: Path, title: str, story: list) -> Path:
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    SimpleDocTemplate(str(out_file), pagesize=landscape(A4), leftMargin=1 * cm, rightMargin=1 * cm,
+                      topMargin=1 * cm, bottomMargin=1 * cm, title=title, author="RealBasket").build(story)
+    return out_file
+
+
+def generate_yearly_price_reports(output_dir: str | Path = "reports", basket: Basket | None = None) -> list[Path]:
+    """Ein PDF pro Kalenderjahr der Referenzdaten: Monatskosten je Ausgabengruppe, Summe, ECLI und VPI."""
+    basket = basket or load_basket()
+    ds, styles = basket.real, getSampleStyleSheet()
+    ecli = essential_index(basket.prices, basket.weights)
+    cpi = {c.period: c.index_value for c in basket.cpi}
+    cost = {(p.category, p.period): p.price for p in basket.prices}
+    files = []
+    for year in sorted({p.year for p in ds.periods}):
+        months = [p for p in ds.periods if p.year == year]
+        first_w = 4.2 * cm
+        widths = [first_w] + [(PAGE_W - first_w) / len(months)] * len(months)
+        head = ["Ausgabengruppe"] + [MONTHS_DE[m.month - 1] for m in months]
+        rows = [head] + [[CATEGORY_LABEL_DE[c]] + [format_eur(cost[(c, m)]) for m in months]
+                         for c in basket.categories]
+        rows.append(["Summe €/Monat"] + [format_eur(sum(cost[(c, m)] for c in basket.categories)) for m in months])
+        idx_rows = [["Index (11/2024 = 100)"] + head[1:],
+                    ["ECLI (nachgerechnet)"] + [_num(float(ecli[pd.Timestamp(m)])) for m in months],
+                    ["ECLI (Referenzbericht)"] + [_num(ds.printed_ecli[m]) for m in months],
+                    ["VPI (Destatis)"] + [_num(cpi[m]) if m in cpi else "–" for m in months]]
+        story = _header(f"RealBasket – Modellierte Lebenshaltungskosten {year}", basket, styles) + [
+            Paragraph(f"Referenzwarenkorb (Basis 11/2024) in EUR pro Monat, {MONTHS_DE[months[0].month - 1]} – "
+                      f"{MONTHS_DE[months[-1].month - 1]} {year}", styles["Heading2"]),
+            _table(rows, widths, bold_last=True, font_size=7.5),
+            Spacer(1, 0.5 * cm),
+            Paragraph("Indizes", styles["Heading2"]),
+            _table(idx_rows, widths, header=GREY, font_size=7.5),
+            Spacer(1, 0.5 * cm),
+            Paragraph("„Wohnen / Energie“ umfasst mehr als die Nettokaltmiete. Die Werte sind modelliert "
+                      "(Destatis-Ausgaben EVS 2023, fortgeschrieben mit amtlichen Preisindizes).", styles["Italic"]),
+            Paragraph(DISCLAIMER, styles["Italic"]),
         ]
-        if is_demo:
-            story += [Spacer(1, 0.3 * cm),
-                      Paragraph("<font color='#C0392B'>Demo-Daten (grobe Größenordnung), keine amtlichen "
-                                "Werte.</font>", styles["Normal"])]
-
-    doc = SimpleDocTemplate(str(out_file), pagesize=landscape(A4), leftMargin=1 * cm, rightMargin=1 * cm,
-                            topMargin=1 * cm, bottomMargin=1 * cm,
-                            title=f"RealBasket Preise {year}", author="RealBasket")
-    doc.build(story)
-
-
-def generate_yearly_price_reports(output_dir: str | Path = "reports", months: int = 60,
-                                  end: date | None = None) -> list[Path]:
-    """Erzeugt ein PDF pro Kalenderjahr für die letzten `months` Monate (inkl. Endmonat)."""
-    end = (end or date.today()).replace(day=1)
-    start = _shift_months(end, -(months - 1))
-
-    # TODO: bei USE_DEMO_DATA=false echte Collector verwenden
-    prices = demo_prices(start=start, months=months)
-    cpi = demo_cpi(start=start, months=months)
-    regional_rents = demo_regional_rents(start=start, months=months)
-    is_demo = True
-
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    files: list[Path] = []
-    for year in sorted({p.period.year for p in prices}):
-        out_file = out / f"realbasket_preise_{year}.pdf"
-        _build_year_pdf(year, [p for p in prices if p.period.year == year],
-                        [c for c in cpi if c.period.year == year], out_file, is_demo,
-                        [r for r in regional_rents if r.period.year == year])
-        files.append(out_file)
+        files.append(_build(Path(output_dir) / f"realbasket_preise_{year}.pdf", f"RealBasket Preise {year}", story))
     return files
 
 
-def generate_average_rent_report(output_dir: str | Path = "reports", months: int = 60,
-                                 end: date | None = None) -> Path:
-    """PDF mit der durchschnittlichen Miete (EUR/m²) pro Bundesland und Stadt: je Jahr und gesamt."""
-    end = (end or date.today()).replace(day=1)
-    start = _shift_months(end, -(months - 1))
-    rents = demo_regional_rents(start=start, months=months)  # TODO: echte Quelle bei USE_DEMO_DATA=false
-    styles = getSampleStyleSheet()
-    period_txt = f"{MONTHS_DE[start.month - 1]} {start.year} – {MONTHS_DE[end.month - 1]} {end.year}"
+def generate_rent_report(output_dir: str | Path = "reports", basket: Basket | None = None) -> Path:
+    """PDF: Angebotsmieten der 15 größten Städte (Jan vs. Okt 2026) und Abdeckung je Bundesland."""
+    basket = basket or load_basket()
+    ds, styles = basket.real, getSampleStyleSheet()
+    if not ds.city_rents:
+        raise RealDataError("Keine Stadtmieten in den Referenz-PDFs gefunden")
+    cities = sorted(ds.city_rents, key=lambda c: -c["rent_oct_eur_m2"])
+    rows = [["Stadt", "Bundesland", "Jan 2026 €/m²", "Okt 2026 €/m²", f"Jan 2026 {CITY_FLAT_M2} m²",
+             f"Okt 2026 {CITY_FLAT_M2} m²", "Veränderung"]]
+    rows += [[c["city"], c["state"], format_eur(c["rent_jan_eur_m2"]), format_eur(c["rent_oct_eur_m2"]),
+              format_eur(c["rent_jan_flat_eur"]), format_eur(c["rent_oct_flat_eur"]), _pct(c["change_pct"], True)]
+             for c in cities]
+    n = len(cities)
+    rows.append(["Ø alle Städte (ungewichtet)", "",
+                 *(format_eur(sum(c[k] for c in cities) / n) for k in
+                   ("rent_jan_eur_m2", "rent_oct_eur_m2", "rent_jan_flat_eur", "rent_oct_flat_eur")),
+                 _pct(sum(c["change_pct"] for c in cities) / n, True)])
+    widths = [4.6 * cm, 4.6 * cm] + [(PAGE_W - 9.2 * cm) / 5] * 5
 
-    story = [
-        Paragraph("RealBasket – Durchschnittliche Miete pro Bundesland und Stadt", styles["Title"]),
-        Paragraph(f"Zeitraum: {period_txt} ({months} Monate) · Angebotsmiete nettokalt in EUR pro m² · "
-                  f"Erstellt am {date.today():%d.%m.%Y}", styles["Normal"]),
-        Paragraph("<font color='#C0392B'><b>Hinweis: Synthetische Demo-Daten (grobe Größenordnung) – keine "
-                  "amtlichen Werte.</b></font>", styles["Normal"]),
-    ]
-    for rtype, title in ((RegionType.STATE, "Ø Miete nach Bundesland"),
-                         (RegionType.CITY, "Ø Miete in den größten Städten")):
-        table = average_rents(rents, rtype)
-        overall = overall_average(table)
-        header = ["Region"] + [c if c == TOTAL_COL else f"Ø {c}" for c in table.columns]
-        rows = [header] + [[region] + [format_eur(v) for v in r] for region, r in table.iterrows()]
-        rows.append(["Ø alle Regionen"] + [format_eur(v) for v in overall])
+    cov_rows = [["Bundesland", "Verifizierte Landesreihe", "Städte mit veröffentlichter Miete (Okt 2026)"]]
+    cov_rows += [[s["bundesland"], "nein",
+                  ", ".join(f"{c['city']} {format_eur(c['rent_eur_per_m2'])}/m²" for c in s["cities"]) or "–"]
+                 for s in state_rent_coverage(ds)]
 
-        first_w = 4.5 * cm
-        other_w = (landscape(A4)[0] - 2 * cm - first_w) / len(table.columns)
-        t = Table(rows, colWidths=[first_w] + [other_w] * len(table.columns), repeatRows=1)
-        t.setStyle(TableStyle([
-            ("FONT", (0, 0), (-1, -1), "Helvetica", 8),
-            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8.5),
-            ("FONT", (-1, 1), (-1, -1), "Helvetica-Bold", 8),
-            ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 8),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0072BC")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F2F6FA")]),
-            ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#0072BC")),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
-        ]))
-        story += [Spacer(1, 0.5 * cm), Paragraph(title, styles["Heading2"]), t]
-    story += [Spacer(1, 0.4 * cm),
-              Paragraph("Ø je Jahr = Mittelwert der verfügbaren Monate des Jahres (Rand-Jahre ggf. unvollständig). "
-                        "„Ø alle Regionen“ ist ein ungewichteter Mittelwert, nicht nach Einwohnern gewichtet.",
-                        styles["Italic"])]
-
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    out_file = out / "realbasket_miete_durchschnitt.pdf"
-    SimpleDocTemplate(str(out_file), pagesize=landscape(A4), leftMargin=1 * cm, rightMargin=1 * cm,
-                      topMargin=1 * cm, bottomMargin=1 * cm, title="RealBasket Ø Miete",
-                      author="RealBasket").build(story)
-    return out_file
-
-
-def _summary_table(header: list[str], body: list[list[str]], footer: list[str]) -> Table:
-    """Tabelle: Region | Werte je Jahr | Ø gesamt (fett) + Fußzeile 'Ø alle Bundesländer'."""
-    n_values = len(header) - 1
-    first_w = 4.5 * cm
-    other_w = (landscape(A4)[0] - 2 * cm - first_w) / n_values
-    t = Table([header] + body + [footer], colWidths=[first_w] + [other_w] * n_values, repeatRows=1)
-    t.setStyle(TableStyle([
-        ("FONT", (0, 0), (-1, -1), "Helvetica", 8),
-        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8.5),
-        ("FONT", (-1, 1), (-1, -1), "Helvetica-Bold", 8),
-        ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 8),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0072BC")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F2F6FA")]),
-        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#0072BC")),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
-    ]))
-    return t
-
-
-def _format_pct(value: float) -> str:
-    return f"{value:.1f} %".replace(".", ",")
-
-
-def generate_salary_report(output_dir: str | Path = "reports", months: int = 60, end: date | None = None,
-                           flat_size_m2: float = DEFAULT_FLAT_SIZE_M2) -> Path:
-    """PDF: Ø monatliches Nettogehalt pro Bundesland (je Jahr und gesamt) + Mietbelastungsquote."""
-    end = (end or date.today()).replace(day=1)
-    start = _shift_months(end, -(months - 1))
-    incomes = demo_net_salaries(start=start, months=months)  # TODO: echte Quelle bei USE_DEMO_DATA=false
-    rents = demo_regional_rents(start=start, months=months, region_type=RegionType.STATE)
-    styles = getSampleStyleSheet()
-    period_txt = f"{MONTHS_DE[start.month - 1]} {start.year} – {MONTHS_DE[end.month - 1]} {end.year}"
-
-    salaries = average_salaries(incomes)
-    sal_header = ["Bundesland"] + [c if c == TOTAL_COL else f"Ø {c}" for c in salaries.columns]
-    sal_body = [[region] + [format_eur(v) for v in row] for region, row in salaries.iterrows()]
-    sal_footer = ["Ø alle Bundesländer"] + [format_eur(v) for v in salaries.mean(axis=0)]
-
-    burden = rent_burden(rents, incomes, flat_size_m2)
-    bur_body = [[region] + [_format_pct(v) for v in row] for region, row in burden.iterrows()]
-    bur_footer = ["Ø alle Bundesländer"] + [_format_pct(v) for v in burden.mean(axis=0)]
-
-    story = [
-        Paragraph("RealBasket – Durchschnittliches Nettogehalt pro Bundesland", styles["Title"]),
-        Paragraph(f"Zeitraum: {period_txt} ({months} Monate) · Ø monatliches Nettogehalt Vollzeit in EUR · "
-                  f"Erstellt am {date.today():%d.%m.%Y}", styles["Normal"]),
-        Paragraph("<font color='#C0392B'><b>Hinweis: Synthetische Demo-Daten (grobe Größenordnung, aus "
-                  "Bruttoverdiensten abgeleitet) – keine amtlichen Werte.</b></font>", styles["Normal"]),
-        Spacer(1, 0.5 * cm),
-        Paragraph("Ø Nettogehalt pro Monat", styles["Heading2"]),
-        _summary_table(sal_header, sal_body, sal_footer),
-        PageBreak(),
-        Paragraph(f"Mietbelastung: Anteil der Nettokaltmiete ({flat_size_m2:g} m²) am Nettogehalt",
+    story = _header("RealBasket – Mieten der größten Städte", basket, styles) + [
+        Paragraph(f"Angebotskaltmiete (nettokalt) pro m² und für eine {CITY_FLAT_M2}-m²-Wohnung",
                   styles["Heading2"]),
-        Paragraph(f"Berechnung: Ø Miete €/m² × {flat_size_m2:g} m² ÷ Ø Nettogehalt. Höchste Belastung zuerst.",
-                  styles["Normal"]),
-        Spacer(1, 0.3 * cm),
-        _summary_table(["Bundesland"] + sal_header[1:], bur_body, bur_footer),
-        Spacer(1, 0.4 * cm),
-        Paragraph("Ø je Jahr = Mittelwert der verfügbaren Monate (Rand-Jahre ggf. unvollständig). "
-                  "„Ø alle Bundesländer“ ist ungewichtet (nicht nach Einwohnern gewichtet).", styles["Italic"]),
-    ]
-
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    out_file = out / "realbasket_nettogehalt_durchschnitt.pdf"
-    SimpleDocTemplate(str(out_file), pagesize=landscape(A4), leftMargin=1 * cm, rightMargin=1 * cm,
-                      topMargin=1 * cm, bottomMargin=1 * cm, title="RealBasket Ø Nettogehalt",
-                      author="RealBasket").build(story)
-    return out_file
-
-
-def _year_month_table(values: dict[date, float], years: list[int], fmt) -> Table:
-    """Jahr × Monat Matrix (Jan–Dez) + Spalte 'Ø Jahr'."""
-    header = ["Jahr"] + MONTHS_DE + ["Ø Jahr"]
-    rows = [header]
-    for y in years:
-        vals = [values.get(date(y, m, 1)) for m in range(1, 13)]
-        present = [v for v in vals if v is not None]
-        rows.append([str(y)] + [fmt(v) if v is not None else "–" for v in vals]
-                    + [fmt(sum(present) / len(present)) if present else "–"])
-    first_w = 1.8 * cm
-    other_w = (landscape(A4)[0] - 2 * cm - first_w) / 13
-    t = Table(rows, colWidths=[first_w] + [other_w] * 13, repeatRows=1)
-    t.setStyle(TableStyle([
-        ("FONT", (0, 0), (-1, -1), "Helvetica", 8),
-        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8.5),
-        ("FONT", (-1, 1), (-1, -1), "Helvetica-Bold", 8),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#5A6772")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F6FA")]),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
-    ]))
-    return t
-
-
-def generate_cpi_report(output_dir: str | Path = "reports", months: int = 60, end: date | None = None) -> Path:
-    """PDF: Verbraucherpreisindex (VPI) der letzten `months` Monate – Indexwerte, Inflationsrate ggü.
-    Vorjahresmonat und Jahresvergleich mit dem Grundbedarf-Index."""
-    end = (end or date.today()).replace(day=1)
-    start = _shift_months(end, -(months - 1))
-    ext_start = _shift_months(start, -12)  # 12 Monate Vorlauf für Vorjahresvergleich
-    # TODO: echte Quelle (Destatis GENESIS 61111-0002) bei USE_DEMO_DATA=false
-    cpi = demo_cpi(start=ext_start, months=months + 12)
-    comparison = compare_with_cpi(essential_index(demo_prices(start=ext_start, months=months + 12)), cpi)
-    comparison = comparison[comparison.index >= pd.Timestamp(start)]
-
-    cpi_values = {c.period: c.index_value for c in cpi if c.period >= start}
-    cpi_yoy = {ts.date(): v for ts, v in comparison["cpi_yoy_pct"].items()}
-    years = sorted({p.year for p in cpi_values})
-    styles = getSampleStyleSheet()
-    period_txt = f"{MONTHS_DE[start.month - 1]} {start.year} – {MONTHS_DE[end.month - 1]} {end.year}"
-
-    # Jahresvergleich VPI vs. Grundbedarf
-    comparison = comparison.assign(year=comparison.index.year)
-    yearly = comparison.groupby("year").agg(
-        cpi=("cpi_yoy_pct", "mean"), essential=("essential_yoy_pct", "mean"),
-        deviation=("deviation_pp", "mean"), n=("cpi_yoy_pct", "size"))
-    cmp_rows = [["Jahr", "Monate", "Ø VPI-Inflation", "Ø Grundbedarf-Inflation", "Abweichung"]]
-    for y, r in yearly.iterrows():
-        cmp_rows.append([str(y), str(int(r["n"])), _format_pct(r["cpi"]), _format_pct(r["essential"]),
-                         f"{r['deviation']:+.1f} pp".replace(".", ",")])
-    cmp_rows.append(["Gesamt", str(len(comparison)), _format_pct(comparison["cpi_yoy_pct"].mean()),
-                     _format_pct(comparison["essential_yoy_pct"].mean()),
-                     f"{comparison['deviation_pp'].mean():+.1f} pp".replace(".", ",")])
-    cmp_table = Table(cmp_rows, colWidths=[3 * cm, 2.5 * cm, 4.5 * cm, 5.5 * cm, 4 * cm], hAlign="LEFT")
-    cmp_table.setStyle(TableStyle([
-        ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
-        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
-        ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 9),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0072BC")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F2F6FA")]),
-        ("LINEABOVE", (0, -1), (-1, -1), 1, colors.HexColor("#0072BC")),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#B0B7BF")),
-    ]))
-
-    story = [
-        Paragraph("RealBasket – Verbraucherpreisindex (VPI)", styles["Title"]),
-        Paragraph(f"Zeitraum: {period_txt} ({months} Monate) · Basis 2020 = 100 · "
-                  f"Erstellt am {date.today():%d.%m.%Y}", styles["Normal"]),
-        Paragraph("<font color='#C0392B'><b>Hinweis: Synthetische Demo-Daten (an grobe historische "
-                  "Jahresraten angelehnt) – keine amtlichen Werte von Destatis.</b></font>", styles["Normal"]),
-        Spacer(1, 0.4 * cm),
-        Paragraph("VPI-Indexwerte (2020 = 100)", styles["Heading2"]),
-        _year_month_table(cpi_values, years, lambda v: f"{v:.1f}".replace(".", ",")),
-        Spacer(1, 0.4 * cm),
-        Paragraph("Inflationsrate: Veränderung ggü. Vorjahresmonat in %", styles["Heading2"]),
-        _year_month_table(cpi_yoy, years, _format_pct),
+        Paragraph(f"Quelle: {cities[0]['source']}", styles["Normal"]),
+        Spacer(1, 0.2 * cm),
+        _table(rows, widths, bold_last=True),
         PageBreak(),
-        Paragraph("Jahresvergleich: offizielle Inflation (VPI) vs. Grundbedarf-Index", styles["Heading2"]),
-        Paragraph("Grundbedarf-Index: Lebensmittel 30 %, Miete 40 %, Energie 15 %, Mobilität 15 %. "
-                  "Werte = Ø der monatlichen Veränderungsraten ggü. Vorjahresmonat.", styles["Normal"]),
-        Spacer(1, 0.3 * cm),
-        cmp_table,
-        Spacer(1, 0.5 * cm),
-        Paragraph(DISCLAIMER, styles["Italic"]),
-        Paragraph("„Ø Jahr“ = Mittelwert der verfügbaren Monate (Rand-Jahre ggf. unvollständig). Die amtliche "
-                  "Jahresinflationsrate wird von Destatis aus den Jahresdurchschnitten des Index berechnet.",
-                  styles["Italic"]),
+        Paragraph("Abdeckung je Bundesland", styles["Heading2"]),
+        Paragraph(STATE_NOTE, styles["Normal"]),
+        Spacer(1, 0.2 * cm),
+        _table(cov_rows, [5 * cm, 4 * cm, PAGE_W - 9 * cm], align_left=True),
     ]
+    return _build(Path(output_dir) / "realbasket_miete_staedte.pdf", "RealBasket Mieten Städte", story)
 
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    out_file = out / "realbasket_verbraucherpreisindex.pdf"
-    SimpleDocTemplate(str(out_file), pagesize=landscape(A4), leftMargin=1 * cm, rightMargin=1 * cm,
-                      topMargin=1 * cm, bottomMargin=1 * cm, title="RealBasket Verbraucherpreisindex",
-                      author="RealBasket").build(story)
-    return out_file
+
+def generate_cpi_report(output_dir: str | Path = "reports", basket: Basket | None = None) -> Path:
+    """PDF: VPI vs. Grundlebenshaltungskosten-Index je Monat inkl. Vorjahresraten und Datenprüfung."""
+    basket = basket or load_basket()
+    ds, styles = basket.real, getSampleStyleSheet()
+    cmp = compare_with_cpi(essential_index(basket.prices, basket.weights), basket.cpi)
+    rows = [["Monat", "ECLI", "VPI", "ECLI ggü. Vorjahr", "VPI ggü. Vorjahr", "Abweichung"]]
+    for ts, r in cmp.iterrows():
+        dev = r["deviation_pp"]
+        rows.append([f"{MONTHS_DE[ts.month - 1]} {ts.year}", _num(r["essential_index"]), _num(r["cpi_index"]),
+                     _pct(r["essential_yoy_pct"]), _pct(r["cpi_yoy_pct"]),
+                     "–" if pd.isna(dev) else f"{'+' if dev >= 0 else ''}{_num(dev, 2)} PP"])
+    weights = ", ".join(f"{CATEGORY_LABEL_DE[c]} {_num(w * 100)} %" for c, w in basket.weights.weights.items())
+    check_rows = [["", "Prüfung", "Details"]] + [["OK" if c.ok else "FEHLER", c.name, c.detail] for c in ds.checks]
+
+    story = _header("RealBasket – Verbraucherpreisindex vs. Grundlebenshaltungskosten", basket, styles) + [
+        Paragraph("Index (11/2024 = 100) und Veränderung ggü. Vorjahresmonat", styles["Heading2"]),
+        Paragraph(f"Gewichte = Ausgabenanteile des Referenzwarenkorbs: {weights}. Vorjahresraten erst ab dem "
+                  "13. Monat der Reihe berechenbar.", styles["Normal"]),
+        Spacer(1, 0.2 * cm),
+        _table(rows, [3 * cm] + [(PAGE_W - 3 * cm) / 5] * 5),
+        Spacer(1, 0.4 * cm),
+        Paragraph(DISCLAIMER, styles["Italic"]),
+        PageBreak(),
+        Paragraph(f"Datenprüfung: {sum(c.ok for c in ds.checks)} von {len(ds.checks)} Prüfungen bestanden",
+                  styles["Heading2"]),
+        Paragraph("Die Zahlen werden deterministisch aus den Tabellen der Referenz-PDFs gelesen (kein LLM) und im "
+                  "Code nachgerechnet.", styles["Normal"]),
+        Spacer(1, 0.2 * cm),
+        _table(check_rows, [2 * cm, 8 * cm, PAGE_W - 10 * cm], align_left=True),
+    ]
+    return _build(Path(output_dir) / "realbasket_verbraucherpreisindex.pdf", "RealBasket Verbraucherpreisindex",
+                  story)
+
+
+def generate_all(output_dir: str | Path = "reports", basket: Basket | None = None) -> list[Path]:
+    """All reports: yearly price PDFs, city rents, VPI comparison."""
+    basket = basket or load_basket()
+    return [*generate_yearly_price_reports(output_dir, basket), generate_rent_report(output_dir, basket),
+            generate_cpi_report(output_dir, basket)]
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="PDF-Berichte (Preise, Miete, Nettogehalt, VPI) der letzten N Monate.")
-    parser.add_argument("--months", type=int, default=60)
+    parser = argparse.ArgumentParser(description="PDF-Berichte aus den echten Daten der Referenz-PDFs.")
     parser.add_argument("--out", default="reports")
     args = parser.parse_args()
-
-    jobs = [
-        ("Jahres-PDFs", lambda: generate_yearly_price_reports(args.out, args.months)),
-        ("Ø Miete", lambda: [generate_average_rent_report(args.out, args.months)]),
-        ("Ø Nettogehalt", lambda: [generate_salary_report(args.out, args.months)]),
-        ("Verbraucherpreisindex", lambda: [generate_cpi_report(args.out, args.months)]),
-    ]
+    try:
+        basket = load_basket()
+    except RealDataError as exc:
+        raise SystemExit(f"Echte Daten nicht verfügbar: {exc}") from exc
+    jobs = [("Jahres-PDFs", lambda: generate_yearly_price_reports(args.out, basket)),
+            ("Mieten Städte", lambda: [generate_rent_report(args.out, basket)]),
+            ("Verbraucherpreisindex", lambda: [generate_cpi_report(args.out, basket)])]
     for name, job in jobs:
         try:
             for f in job():
