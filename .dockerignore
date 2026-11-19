@@ -1,0 +1,23 @@
+# never send secrets or local state into the build context
+.env
+.env.*
+!.env.example
+.git
+.github
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.streamlit/secrets.toml
+data_store
+sessions
+dist
+# generated reports are rebuilt in the app; only the reference PDFs (real data) are needed
+reports/*
+!reports/real-data
+docs
+tests
+.project
+.pydevproject
+.settings

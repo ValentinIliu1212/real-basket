@@ -161,6 +161,37 @@ poetry run real-basket-mcp --transport streamable-http --port 8001  # then MCP_U
 poetry run real-basket-mcp --areas data,analysis                    # subset of the areas
 ```
 
+### Docker
+
+The image contains the code, the dependencies of `poetry.lock` and the reference PDFs (`reports/real-data`). LLM
+settings are **not** baked in: they are passed at runtime from your `.env` (excluded by `.dockerignore`). The agent
+starts the MCP server as a stdio subprocess inside the same container, so one container is enough.
+
+```powershell
+# Docker Compose (recommended): dashboard on http://localhost:8501
+docker compose up --build -d
+docker compose logs -f app
+docker compose down                     # add -v to also delete the method-note index volume
+
+# or plain Docker
+docker build -t realbasket .
+docker run -d --name realbasket -p 8501:8501 --env-file .env -v realbasket-index:/app/data_store realbasket
+
+# CLI / PDF reports / tests of the same image
+docker run --rm --env-file .env realbasket real-basket-cli "Steigen die Grundlebenshaltungskosten schneller als die Inflation?"
+docker run --rm -v ${PWD}/reports:/app/reports realbasket real-basket-pdf --out reports
+
+# optional: MCP server as its own container (Streamable HTTP on :8001); set MCP_URL=http://mcp:8001/mcp in .env
+docker compose --profile mcp-http up --build -d
+```
+
+- Without `.env` the dashboard, PDFs and BM25 search work; the chat shows "nicht konfiguriert".
+- `env_file` with `required: false` needs Docker Compose ≥ 2.24.
+- The method-note index (`/app/data_store`) lives in a named volume, so it is not rebuilt on every start.
+- The container runs as a non-root user and has a health check (`/_stcore/health`).
+- For a cloud deployment (e.g. Azure Container Apps / App Service), push the image to a registry and set the
+  `.env` values as secrets / environment variables of the service; expose port 8501.
+
 **Use the MCP server from Claude Desktop / VS Code** (`claude_desktop_config.json` or `.vscode/mcp.json`; use the
 interpreter of `poetry env info --path`):
 
@@ -304,7 +335,7 @@ objects, so the calculations stay unchanged.
 - [ ] Compare a focus category with the matching CPI sub-index (e.g. energy vs. CPI energy)
 - [ ] Household profiles (single, family, commuter), population weighting, rent burden per city
 - [x] CI pipeline (ruff + pytest + deck build, `.github/workflows/ci.yml`)
-- [ ] Dockerfile
+- [x] Dockerfile (+ `docker-compose.yml`, see [Docker](#docker))
 
 ## Contributing
 

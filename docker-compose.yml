@@ -1,0 +1,34 @@
+# docker compose up --build            -> dashboard on http://localhost:8501 (MCP server as stdio subprocess)
+# docker compose --profile mcp-http up --build
+#   + separate MCP server container; set MCP_URL=http://mcp:8001/mcp in .env so the agent uses it
+services:
+  app:
+    build: .
+    image: realbasket:latest
+    env_file:
+      - path: .env
+        required: false          # without .env the dashboard works, the chat shows "nicht konfiguriert"
+    ports:
+      - "8501:8501"
+    volumes:
+      - knowledge-index:/app/data_store
+    restart: unless-stopped
+
+  mcp:
+    profiles: ["mcp-http"]
+    image: realbasket:latest
+    build: .
+    env_file:
+      - path: .env
+        required: false          # needed only for embedding search in search_methodology
+    command: ["real-basket-mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    volumes:
+      - knowledge-index:/app/data_store
+    healthcheck:
+      disable: true              # the Streamlit health check of the image does not apply here
+    restart: unless-stopped
+
+volumes:
+  knowledge-index:
