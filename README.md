@@ -33,6 +33,9 @@ baskets of goods and different weightings.
 6. **🤖 Chat mit RealBasket**: click an example question; the answer (always German) shows which tools were used,
    and figures that no tool result backs are flagged below the answer (number guardrail).
 7. Sidebar **📄 PDF-Berichte**: download the reference PDFs and the German RealBasket reports generated from them.
+8. **🛰️ Monitoring**: the architecture diagram below with the use-case path of every interaction highlighted
+   (numbered edges = order of the steps). After a chat question you see e.g. UI → Orchestrator → LLM →
+   MCPClient → `analysis` → `core/investigation.py` → `data/` → … → number guardrail → UI.
 
 ## Features
 
@@ -48,6 +51,7 @@ baskets of goods and different weightings.
 | AI agent | Strands chat agent that decides itself which tools to call; numbers only from deterministic tools; answers in German |
 | Number guardrail | `agents/guardrail.py`: every figure of an answer is matched against the tool results of the conversation; unbacked figures are flagged in chat and CLI |
 | Method notes (RAG) | Search over method notes and caveats of reference PDFs (`reports/real-data`), cited with file + page. Context only – figures never come from text search |
+| Monitoring | `ui/monitoring.py`: every interaction (dashboard load / weight change, RAG search, PDF reports, chat question, new chat) is recorded as a use-case path and drawn on the architecture diagram (Graphviz, rendered in the browser). Chat paths come from the real Strands messages (LLM calls, MCP tool calls, tool errors, guardrail result) |
 
 ## Architecture
 
@@ -105,6 +109,7 @@ src/real_basket/
 ├── reports/pdf_report.py  # PDF generation (reportlab)
 ├── schemas/models.py
 ├── ui/app.py        # Streamlit dashboard
+├── ui/monitoring.py # use-case paths of the interactions + architecture diagram (DOT)
 └── cli.py           # chat CLI
 ```
 
@@ -205,6 +210,7 @@ Without the reference PDFs the dashboard, the agent tools and the PDF reports st
 | 🏠 Miete Städte | Real asking rents of the 15 largest cities Jan/Oct 2026 (€/m², 75 m²); coverage per federal state |
 | 📚 Methodenhinweise (RAG) | Index status and search over the reference PDFs with file + page |
 | 🤖 Chat mit RealBasket | Chat (German) with follow-up questions, example questions, tools used per answer |
+| 🛰️ Monitoring | Architecture diagram with the highlighted use-case path of the selected interaction (latest first), step table (from → to, action, details, status), history of the session |
 
 ### PDF reports
 

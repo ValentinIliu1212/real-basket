@@ -1,6 +1,7 @@
 """Streamlit-Oberfläche. Start: poetry run streamlit run src/real_basket/ui/app.py"""
 
 import tempfile
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +17,7 @@ from real_basket.core.settings import get_settings
 from real_basket.data.basket import Basket, RealDataError, load_basket
 from real_basket.data.real_data import CITY_FLAT_M2, real_data_dir
 from real_basket.schemas.models import CATEGORY_LABEL_DE, BasketWeights, Category
+from real_basket.ui import monitoring as mon
 
 ICON = {Category.FOOD: "🍞", Category.HOUSING_ENERGY: "🏠", Category.MOBILITY: "🚆", Category.HEALTH: "💊",
         Category.COMMUNICATION: "📱"}
@@ -36,6 +38,16 @@ st.set_page_config(page_title="RealBasket", page_icon="🧺", layout="wide")
 def de(value: float, digits: int = 2) -> str:
     """German number format: 1234.5 -> '1.234,50'."""
     return f"{value:,.{digits}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+MAX_TRACES = 30
+
+
+def record(trace: mon.Trace) -> None:
+    """Store the use-case path of an interaction for the monitoring tab (latest first, per session)."""
+    traces = st.session_state.setdefault("traces", [])
+    traces.insert(0, trace)
+    del traces[MAX_TRACES:]
 
 
 # --- Cached data ----------------------------------------------------------------------------------
@@ -94,7 +106,13 @@ if ref_pdfs:
         st.sidebar.download_button(f.name, f.read_bytes(), file_name=f.name, mime="application/pdf",
                                    key=f"ref_{f.name}")
 if st.sidebar.button("RealBasket-Berichte erzeugen (Deutsch, EUR)"):
-    st.session_state.pdfs = build_pdfs()
+    t0 = time.perf_counter()
+    try:
+        st.session_state.pdfs = build_pdfs()
+        record(mon.pdf_trace(list(st.session_state.pdfs), time.perf_counter() - t0))
+    except Exception as exc:  # recorded for monitoring, then shown as usual
+        record(mon.pdf_trace([], time.perf_counter() - t0, error=str(exc)))
+        raise
 for name, data in st.session_state.get("pdfs", {}).items():
     st.sidebar.download_button(name, data, file_name=name, mime="application/pdf", key=f"dl_{name}")
 
@@ -113,8 +131,14 @@ st.caption("Was kostet das Leben wirklich? Index der Grundlebenshaltungskosten i
            "Verbraucherpreisindex (VPI)")
 
 prices, cpi = basket.prices, basket.cpi
+t0 = time.perf_counter()
 comparison = compare_with_cpi(essential_index(prices, weights), cpi)
 breakdown = deviation_breakdown(prices, cpi, weights)
+dashboard_sig = tuple(round(v, 4) for v in raw.values())
+if st.session_state.get("dashboard_sig") != dashboard_sig:   # first load or weights changed (not every rerun)
+    record(mon.dashboard_trace("dashboard_sig" in st.session_state, sum(c.ok for c in basket.real.checks),
+                               len(basket.real.checks), time.perf_counter() - t0))
+    st.session_state.dashboard_sig = dashboard_sig
 driver = breakdown["categories"][0]
 
 c1, c2, c3, c4 = st.columns(4)
@@ -141,9 +165,9 @@ with st.expander(("✅" if ok else "⚠️") + f" Datenprüfung: {sum(c.ok for c
     st.dataframe(base, hide_index=True, width="stretch")
     st.caption("Quellen: " + ", ".join(basket.real.documents))
 
-tab_overview, tab_drivers, tab_rent, tab_method, tab_agent = st.tabs(
+tab_overview, tab_drivers, tab_rent, tab_method, tab_agent, tab_monitor = st.tabs(
     ["📈 Index vs. VPI", "🧩 Einflussfaktoren", "🏠 Miete Städte", "📚 Methodenhinweise (RAG)",
-     "🤖 Chat mit RealBasket"])
+     "🤖 Chat mit RealBasket", "🛰️ Monitoring"])
 
 with tab_overview:
     col_idx, col_yoy = st.columns(2)
@@ -225,7 +249,12 @@ with tab_method:
                        "(oder KNOWLEDGE_DIR in `.env` setzen).")
         kq = st.text_input("Suche", placeholder="z. B. Ist Wohnen / Energie die Nettokaltmiete?")
         if kq:
-            hits = kb.search(kq)["passages"]
+            t0 = time.perf_counter()
+            res = kb.search(kq)
+            hits = res["passages"]
+            if st.session_state.get("last_kq") != kq:          # record new searches only, not every rerun
+                record(mon.rag_trace(kq, res["retriever"], len(hits), time.perf_counter() - t0))
+                st.session_state.last_kq = kq
             for p in hits:
                 also = f" · auch in {', '.join(p['also_in'])}" if p["also_in"] else ""
                 st.markdown(f"**{p['source']} S. {p['page']}** · {p['section']}{also}\n\n> {p['text']}")
@@ -259,6 +288,7 @@ with tab_agent:
         old_agent = st.session_state.pop("agent", None)
         if old_agent is not None and hasattr(old_agent, "cleanup"):
             old_agent.cleanup()               # stops the MCP server subprocess of the old session
+        record(mon.new_chat_trace(old_agent is not None))
 
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
@@ -274,23 +304,63 @@ with tab_agent:
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").markdown(prompt)
         check = ""
+        t0, created, turn, figures, error = time.perf_counter(), False, [], [], ""
         with st.chat_message("assistant"), st.spinner("Der Agent wählt Werkzeuge und analysiert ..."):
             try:
                 if "agent" not in st.session_state:       # one agent per session -> follow-up questions work
                     from real_basket.agents.orchestrator import create_orchestrator
 
+                    created = True                        # set first: a failed start shows up in the trace
                     st.session_state.agent = create_orchestrator()
                 agent = st.session_state.agent
                 before = len(agent.messages)
-                answer = str(agent(prompt))
-                tools = _tools_used(agent.messages[before:])
+                try:
+                    answer = str(agent(prompt))
+                finally:
+                    turn = list(agent.messages[before:])  # messages of this turn -> use-case path (monitoring)
+                tools = _tools_used(turn)
                 # guardrail: every figure must come from a tool result of the conversation
-                check = warning_text(unverified_figures(answer, agent.messages, prompt))
+                figures = unverified_figures(answer, agent.messages, prompt)
+                check = warning_text(figures)
             except Exception as exc:  # noqa: BLE001 - show the error instead of crashing the demo
-                answer, tools = f"⚠️ Fehler des Agenten: {exc}", []
+                answer, tools, error = f"⚠️ Fehler des Agenten: {exc}", [], str(exc)
+            record(mon.chat_trace(prompt, turn, "" if error else answer, figures, time.perf_counter() - t0,
+                                  error, created))
             st.markdown(answer)
             if tools:
                 st.caption("🔧 " + " → ".join(tools))
             if check:
                 st.warning(check)
         st.session_state.messages.append({"role": "assistant", "content": answer, "tools": tools, "check": check})
+
+# --- Monitoring: use-case path of every interaction (rendered last -> includes the chat turn of this run) ---
+with tab_monitor:
+    st.caption("Architektur wie im README (Abschnitt Architecture). Jede Interaktion – Dashboard laden / Gewichte "
+               "ändern, Methodensuche, PDF-Berichte, Chatfrage, neuer Chat – wird mit ihrem Use-Case-Pfad "
+               "aufgezeichnet: nummerierte Kanten = Reihenfolge der Schritte, gestrichelt = Rückgabe.")
+    traces: list[mon.Trace] = st.session_state.get("traces", [])
+    if traces:
+        h1, h2, h3, h4 = st.columns(4)
+        h1.metric("Aufgezeichnete Vorgänge", len(traces))
+        h2.metric("Chatfragen", sum(t.kind == "Chat" for t in traces))
+        h3.metric("Tool-Aufrufe (MCP)", sum(s.action == "tools/call" for t in traces for s in t.steps))
+        h4.metric("Mit Warnung / Fehler", sum(t.status != "ok" for t in traces))
+    by_id = {t.id: t for t in traces}
+    overview = "🗺️ Gesamtarchitektur (ohne Pfad)"
+    chosen = st.selectbox("Vorgang", [0, *by_id], index=1 if traces else 0,
+                          format_func=lambda i: by_id[i].label if i in by_id else overview)
+    selected = by_id.get(chosen)
+    if selected is not None and selected.note:
+        st.info(selected.note)
+    st.graphviz_chart(mon.to_dot(selected), width="stretch")
+    if selected is not None:
+        st.dataframe(pd.DataFrame(selected.rows()), hide_index=True, width="stretch")
+    if traces:
+        with st.expander(f"Verlauf ({len(traces)} Vorgänge, neueste zuerst)"):
+            st.dataframe(pd.DataFrame([{"Zeit": f"{t.started:%H:%M:%S}", "Status": mon.STATUS_ICON[t.status],
+                                        "Vorgang": t.kind, "Titel": t.title, "Schritte": len(t.steps),
+                                        "Dauer s": None if t.duration_s is None else round(t.duration_s, 2),
+                                        "Info": t.note} for t in traces]), hide_index=True, width="stretch")
+        if st.button("🧹 Verlauf leeren"):
+            st.session_state.traces = []
+            st.rerun()
