@@ -1,179 +1,114 @@
-# Process Flow Redesign: from deterministic pipeline to non-deterministic agentic process
+# Process Flow: non-deterministic agentic monitoring with a deterministic core
 
-## 1. Current state: deterministic
+> Status: November 2026. This document describes the **implemented** process (`src/real_basket/flow/`).
+> The original deterministic pipeline is kept in section 8 for reference only.
 
-Today RealBasket is essentially a **fixed pipeline**. The orchestrator prompt prescribes the steps
-(collect → calculate → explain), the tools return deterministic (demo) data, the calculations are pure
-functions, and the PDF reports are a fixed script. The only non-deterministic element is the wording of
-the LLM answer and which tool it picks for a question.
+## 1. Current state
 
-```mermaid
-flowchart LR
-    U(["User question / CLI"]) --> O["Orchestrator Agent<br/>fixed 3-step prompt"]
-    O --> T1["collect_category_prices<br/>(food, rent, energy, mobility)"]
-    T1 --> T2["calculate_essential_vs_cpi"]
-    T2 --> T3["LLM explanation + disclaimer"]
-    S(["real-basket-pdf"]) --> PDF["Fixed set of PDF reports"]
-```
+RealBasket has two entry points that share the same deterministic calculation core (`core/`):
 
-| Aspect | Current behaviour |
-|--------|-------------------|
-| Control flow | Fixed, defined by prompt / script |
-| Data sources | Fixed (demo generator) |
-| Error handling | None needed (data cannot fail) |
-| Analysis depth | Same for every question |
-| Output | Fixed answer format / fixed PDF set |
+| Entry point | Behaviour | Orchestration |
+|-------------|-----------|---------------|
+| **Chat agent** `REALBASKET-ORCHESTRATOR` (dashboard chat tab, `real-basket-cli`) | Answers questions with tools (prices, essential vs CPI, regional rents, net salaries, `investigate_deviation`). Can start a monitoring run (`run_monitoring_flow`) when the user explicitly asks for fresh, validated data | Classic LLM orchestrator: the model decides which tools to call |
+| **Monitoring flow** (`real-basket-flow`, dashboard tab **🔄 Monitoring runs**, chat tool) | Collects, validates, calculates, investigates and publishes one validated essential index per run | A Strands `Graph`: 5 LLM agents + 7 deterministic function nodes; routing is code (`RunContext.next_after_*`) |
 
-## 2. Is a non-deterministic process possible? Yes.
-
-A non-deterministic flow, where the agents decide the path at runtime, adds real value wherever the path
-**cannot be known in advance**:
-
-| Problem in the real world | Why a fixed flow fails | What the agent decides at runtime |
-|---------------------------|------------------------|-----------------------------------|
-| Price sources are heterogeneous (APIs, web pages, PDFs), change or go offline | Hard-coded scrapers break | Which source to use, alternative sources, how to extract |
-| Data quality varies (outliers, unit errors, missing months, conflicting sources) | No recovery path | Retry, cross-check, exclude, or escalate to a human |
-| Deviation between essential index and CPI needs explanation | Same shallow answer every time | Whether and how deep to drill down (category → item → region) |
-| Users ask very different questions | One generic plan | A dynamic plan per question (scope, regions, period) |
-| Different outputs are relevant per situation | Always the same PDFs | Dashboard update, PDF, alert, or chat answer |
+Triggers of the monitoring flow: `schedule`, `question`, `price_alert` (`--trigger`). There is no scheduler yet;
+a monthly run has to be started externally (e.g. Windows Task Scheduler / cron calling `real-basket-flow`).
 
 **Design principle: non-deterministic shell, deterministic core.**
 
-- **Non-deterministic (LLM agents):** planning, source selection, extraction, validation judgement,
-  investigation, report composition.
-- **Deterministic (plain code, no LLM):** index calculation, CPI comparison, averages, rent burden.
-  The numbers must be **reproducible** from the stored data set, because an LLM must never "calculate" an
-  inflation rate.
+- **Non-deterministic (LLM agents):** plan (focus, history length, investigation depth, fresh vs. re-used data),
+  source selection, validation judgement, investigation path, re-planning, report wording and output channels.
+- **Deterministic (plain code, no LLM):** basket completeness, quality rules, retry / budget limits, index
+  calculation, CPI comparison, confidence score, release gate, disclaimer and provenance. The numbers are
+  **reproducible** from the stored `dataset.json` of a run; an LLM never calculates an inflation rate.
 
-## 3. Target use case: "Autonomous essential price monitoring & deviation investigation"
+## 2. Process diagram (as implemented)
 
-**Trigger:** monthly schedule, a user question, or a price alert (e.g. a fuel price jump).
-**Goal:** produce a validated, explained essential living cost index for the month, and investigate
-autonomously whenever it deviates noticeably from the official CPI.
-
-### Process diagram
+Node names are the node ids of the graph in `flow/graph.py`.
 
 ```mermaid
 flowchart TD
-    T(["Trigger:<br/>monthly schedule / user question / price alert"]) --> P
+    T(["Trigger: schedule / question / price_alert<br/>real-basket-flow · dashboard · chat tool"]) --> PL
 
-    subgraph NDET1["Non-deterministic: data acquisition (agents decide the path)"]
-        P["Planner Agent<br/>interprets the goal and builds a dynamic plan:<br/>focus, period, depth, fresh vs. re-used data<br/>(always the complete basket)"]
-        P --> C{"Which data must<br/>be fetched fresh?"}
-        C -->|food| CF["Food Collector Agent"]
-        C -->|rent| CR["Rent Collector Agent"]
-        C -->|energy| CE["Energy Collector Agent"]
-        C -->|mobility| CM["Mobility Collector Agent"]
-        C -->|"CPI / salaries"| CO["Official Statistics Agent<br/>(Destatis, BA, Eurostat)"]
-        CF & CR & CE & CM & CO --> V["Validator / Critic Agent<br/>plausibility, units, outliers,<br/>conflicts between sources"]
-        V --> Q{"Data quality<br/>sufficient?"}
-        Q -->|"no, retries left"| ALT["Choose an alternative source<br/>or re-extract"]
-        ALT --> C
-        Q -->|"no, retries exhausted"| H1[/"Human review:<br/>accept, correct or exclude"/]
-    end
+    PL["planner (agent)<br/>get_memory, list_sources, submit_plan:<br/>focus, months, investigation depth,<br/>which datasets to re-use"]
+    PL --> PG["plan_gate (code)<br/>complete basket enforced (plan_amended);<br/>planned re-use from data store,<br/>max. 3 months carried forward"]
 
-    subgraph DET["Deterministic core (reproducible, no LLM)"]
-        S[("Data store<br/>raw snapshots + provenance")]
-        S --> CALC["Calculation engine<br/>essential index, CPI comparison,<br/>Ø rents, rent burden"]
-    end
+    PG -->|"datasets pending"| CO["collector (agent)<br/>fetch_from_source:<br/>chooses a source per dataset"]
+    PG -->|"nothing to fetch"| CA
 
-    Q -->|yes| S
-    H1 --> S
+    CO --> QC["quality_checks (code)<br/>gaps, outliers, units, provenance;<br/>not delivered = failed attempt"]
+    QC -->|"data collected"| VA["validator (agent)<br/>submit_decision:<br/>accept / retry / exclude / escalate"]
+    QC -->|"nothing collected"| VG
+    VA --> VG{"validation_gate (code)<br/>undecided → rule default;<br/>critical data never accepted;<br/>retry limit → escalate"}
 
-    subgraph NDET2["Non-deterministic: analysis and reporting"]
-        A["Analyst Agent<br/>interprets the results"]
-        A --> D{"Deviation from CPI<br/>above threshold?"}
-        D -->|yes| INV["Investigation loop<br/>drill down: category, item, region;<br/>compare with official sub-indices"]
-        INV --> NEED{"More data<br/>needed?"}
-        D -->|no| R
-        NEED -->|no| R
-        R["Reporter Agent<br/>chooses the output: dashboard,<br/>PDF, alert or chat answer"]
-        R --> G{"Confidence<br/>high?"}
-        G -->|no| H2[/"Human approval"/]
-    end
+    VG -->|"retry: alternative source"| CO
+    VG -->|"escalated"| HR[/"human_review<br/>accept or exclude"/]
+    VG -->|"all decided"| CA
+    HR --> CA
 
-    CALC --> A
-    NEED -->|"yes: re-plan"| P
-    G -->|yes| OUT(["Publish<br/>with disclaimer + data provenance"])
-    H2 --> OUT
-    OUT --> MEM[("Memory: source reliability,<br/>past decisions, history")]
-    MEM -.->|"informs next run"| P
+    CA{"calculate (code)<br/>lost dataset → fallback to stored data;<br/>basket complete?"}
+    CA -->|"yes: dataset.json + hash,<br/>essential index vs CPI"| AN
+    CA -->|"no: refused_incomplete_basket"| RE
+
+    AN["analyst (agent)<br/>get_results, investigate:<br/>category / item / region"]
+    AN -->|"request_more_data<br/>(max. 1 re-plan)"| PL
+    AN -->|"submit_analysis<br/>(investigation mandatory if<br/>deviation above 1 pp)"| RE
+
+    RE["reporter (agent)<br/>submit_report: markdown +<br/>outputs chat / dashboard / pdf / alert"]
+    RE --> RG{"release_gate (code)<br/>appends demo note, provenance,<br/>disclaimer; computes confidence"}
+
+    RG -->|"no results"| FAIL(["failed"])
+    RG -->|"confidence ≥ 0.7<br/>and no fallback data"| PU
+    RG -->|"confidence below 0.7<br/>or fallback data"| HA[/"Human approval<br/>CLI interactive or dashboard"/]
+    HA -->|approve| PU
+    HA -->|reject| REJ(["rejected"])
+    HA -->|later| PEN(["pending_approval<br/>approve / reject in dashboard"])
+    PEN -.-> PU
+
+    PU(["publish (code)<br/>report.md · report.pdf · alert.json"])
+
+    DS[("data_store/runs/run-id<br/>raw snapshots · dataset.json ·<br/>run.json · audit.jsonl")]
+    MEM[("data_store/memory.json<br/>source reliability · recent runs")]
+    CO -.->|"raw snapshot per fetch"| DS
+    CA -.->|"dataset.json"| DS
+    DS -.->|"last validated data (re-use / fallback)"| PG
+    VA -.->|"source reliability"| MEM
+    MEM -.->|"informs next plan"| PL
+
+    classDef agent fill:#dbeafe,stroke:#2563eb,color:#000
+    classDef code fill:#f3f4f6,stroke:#6b7280,color:#000
+    classDef human fill:#fef3c7,stroke:#d97706,color:#000
+    class PL,CO,VA,AN,RE agent
+    class PG,QC,VG,CA,RG,PU code
+    class HR,HA,PEN human
 ```
+
+Blue = LLM agent, grey = deterministic code, yellow = human. Every node and decision is written to `audit.jsonl`;
+the run summary is added to `memory.json` at the end of every run (also failed ones).
 
 ### Why this flow is non-deterministic
 
-- **Dynamic branching:** the planner decides at runtime which datasets are fetched fresh and which are re-used
-  from the data store, the period and the focus. The *scope* is fixed: the essential index always uses the
-  complete basket (see section 8).
-- **Loops with an unknown number of iterations:** the validation loop (alternative sources) and the
-  investigation loop (re-planning when more data is needed).
-- **LLM judgement at decision points:** data quality, whether a deviation is relevant, which output fits.
-- **Learning across runs:** source reliability and earlier decisions from memory shape the next plan.
-- Two runs with the same trigger can therefore take **different paths**, but they produce
-  **reproducible numbers** for the same stored data set.
+- **Dynamic decisions:** the planner decides focus, history length, investigation depth and which datasets
+  are re-used from the data store; the collector chooses the source; the validator judges the data.
+  The *scope* is fixed: the essential index always uses the complete basket (section 3).
+- **Loops with an unknown number of iterations:** the validation loop (retry with an alternative source,
+  max. `MAX_SOURCE_ATTEMPTS`) and the re-plan loop analyst → planner (max. `MAX_REPLANS`).
+- **LLM judgement at decision points:** data quality, investigation path (category → item → region),
+  whether more data is needed, which output channels fit, report wording.
+- **Learning across runs:** source reliability and summaries of earlier runs from `memory.json` shape the next plan.
+- **Faulty demo sources:** the "error-prone" demo sources fail randomly (`DEMO_FAULT_RATE`, default 0.35),
+  so the retry and escalation paths are actually exercised.
 
-## 4. Guardrails
+Two runs with the same trigger can therefore take **different paths**; for the same stored `dataset.json`
+the numbers are always identical.
 
-| Risk | Mitigation |
-|------|------------|
-| Hallucinated prices | Every price needs a source URL / API and a stored raw snapshot; the validator rejects values without provenance |
-| Endless loops / cost | Max. retries per source, max. investigation depth, token / time budget per run |
-| Non-reproducible numbers | All calculations run in deterministic code on the stored data set; the data set is versioned per run |
-| Misleading conclusions | The disclaimer is mandatory in every output ("a deviation does not mean the CPI is wrong") |
-| Low-confidence results | Human-in-the-loop before publishing (Strands interrupts) |
-| Traceability | Audit log of plan, chosen sources, decisions and iterations per run |
-
-## 5. Mapping to Strands Agents
-
-| Process element | Strands building block |
-|-----------------|------------------------|
-| Planner → collectors → validator with conditional edges and loops | `strands.multiagent` **Graph** (conditional edges, cycles) |
-| Collectors handing off between each other (e.g. rent ↔ official statistics) | **Swarm** pattern / agents-as-tools |
-| Deterministic calculation engine | Plain `@tool` functions wrapping `core/` (already in place) |
-| Human review / approval | Strands **interrupts** (`InterruptResponseContent`) |
-| Memory / history across runs | Session manager (`FileSessionManager` / `S3SessionManager`) + data store |
-| Source discovery | Web search / fetch tools, MCP servers |
-
-## 6. Implementation roadmap
-
-1. **Data store + provenance:** persist every data point with source and raw snapshot (precondition for everything else).
-2. **Validator agent + retry loop**, still with the fixed set of collectors.
-3. **Real collectors** per category, with alternative sources and a source registry.
-4. **Planner agent + Graph orchestration**, replacing the fixed 3-step prompt.
-5. **Investigation loop** for deviations above the threshold.
-6. **Human-in-the-loop** (interrupts) and **memory** of source reliability.
-7. **Scheduler trigger** (monthly run) and alerting.
-
-## 7. Implementation status (November 2026)
-
-Steps 1, 2, 4, 5 and 6 are implemented in `src/real_basket/flow/`; steps 3 and 7 are open (still demo sources,
-no scheduler). Run with `poetry run real-basket-flow` or the **🔄 Monitoring runs** tab of the dashboard.
-
-| Design element | Implementation |
-|----------------|----------------|
-| Planner / Collector / Validator / Analyst / Reporter | Five Strands agents (`REALBASKET-PLANNER`, …) as nodes of a `strands.multiagent.GraphBuilder` graph, each with its own tools (`flow/tools.py`) |
-| Fixed calculation engine | Deterministic `FunctionNode`s (`plan_gate`, `quality_checks`, `validation_gate`, `calculate`, `release_gate`, `publish`) wrapping `core/engine.py`, `core/validation.py` |
-| Loops | Conditional edges: validator → collector (retry with alternative source), analyst → planner (re-plan), investigation tool calls inside the analyst |
-| Hallucinated prices | Prices only enter via `fetch` from the source registry; every row carries its source; raw snapshot stored per fetch; missing provenance is a critical issue |
-| Critical data | Hard rule in code: a dataset with critical issues can never be accepted, whatever the validator agent decides |
-| Endless loops / cost | `MAX_SOURCE_ATTEMPTS`, `MAX_INVESTIGATION_STEPS`, `MAX_REPLANS`, `MAX_NODE_EXECUTIONS`, `RUN_TIMEOUT_S` |
-| Reproducible numbers | Accepted data stored as `dataset.json` with hash; tests recompute the results from it |
-| Mandatory disclaimer | Appended by code (demo-data note, provenance footer, disclaimer) — the reporter cannot drop it |
-| Human-in-the-loop | Pluggable approver (`deferred` → approve / reject in the dashboard, `interactive` CLI, `auto` demo); confidence is computed in code from data quality, re-used data and human overrides; fallback to stored data always needs approval. Strands interrupts are not used yet |
-| Memory | `data_store/memory.json`: source reliability and past results, given to the planner of the next run |
-| Audit | `audit.jsonl` per run: plan, fetches, validator decisions, gates, investigations, human decisions |
-
-**Remaining randomness vs. reproducibility:** two runs may plan differently, pick different sources, retry a
-different number of times or investigate differently (demo sources fail randomly, `DEMO_FAULT_RATE`). For the
-same stored `dataset.json`, the numbers are always identical.
-
-## 8. Orchestration and basket completeness
+## 3. Orchestration and basket completeness
 
 **Who orchestrates?** The monitoring flow has no central LLM supervisor on purpose. The Strands `Graph`
 is the orchestrator: its conditional edges (`RunContext.next_after_*`) route the run deterministically from
-the run state. The agents decide *inside* their nodes (plan, source, accept/retry, investigation depth,
-re-plan, outputs), but they cannot skip a gate, exceed a budget or bypass human approval. The chat front
-door (`REALBASKET-ORCHESTRATOR`) is a classic LLM orchestrator that calls tools and can start a monitoring run.
+the run state. The agents decide *inside* their nodes, but they cannot skip a gate, exceed a budget or bypass
+human approval. The chat front door (`REALBASKET-ORCHESTRATOR`) is a classic LLM orchestrator.
 
 **The essential index needs the complete basket.** It is a weighted basket (rent 40 %, food 30 %,
 energy 15 %, mobility 15 %) compared with the headline CPI. An index over a subset with re-normalised
@@ -184,7 +119,7 @@ be meaningless. Therefore:
 |-------------------------|-------|
 | Every plan covers all categories + CPI; a partial plan is amended and logged (`plan_amended`) | `RunContext.set_plan` |
 | The engine refuses to calculate an incomplete basket (no silent re-weighting); only weight-0 categories may be absent | `engine.compute_results`, `engine.missing_for_basket` |
-| Without the complete basket the run fails (`refused_incomplete_basket`) instead of publishing | `steps.calculate`, `release_gate` |
+| Without the complete basket the run fails (`refused_incomplete_basket`) instead of publishing | `steps.calculate`, `steps.release_gate` |
 
 **Where partial *retrieval* is still realistic** (the calculation always uses the complete basket):
 
@@ -198,3 +133,76 @@ be meaningless. Therefore:
 Stored data is only re-used if it was fetched and accepted in a run that was not rejected, and never from data
 that was itself re-used, so carry-forward cannot chain across runs. Stored data that is too old, has gaps or
 fails the quality rules is not re-used (`reuse_unavailable` in the audit trail); the dataset is fetched fresh.
+
+## 4. Guardrails (as implemented)
+
+| Risk | Mitigation in code |
+|------|--------------------|
+| Hallucinated prices | Prices only enter via `fetch_from_source` from the source registry (`data/sources.py`); every row carries its source; a raw snapshot is stored per fetch; missing provenance is a critical issue |
+| Bad data accepted | Hard rule: a dataset with critical issues can never be accepted, whatever the validator agent decides; undecided datasets get a rule-based default |
+| Endless loops / cost | `MAX_SOURCE_ATTEMPTS` (3), `MAX_INVESTIGATION_STEPS` (4), `MAX_REPLANS` (1), `MAX_NODE_EXECUTIONS` (30), `RUN_TIMEOUT_S` (900) |
+| Shallow explanation of a large gap | `submit_analysis` is rejected while the absolute deviation exceeds `DEVIATION_THRESHOLD_PP` (1.0 pp) and no investigation step was done |
+| Non-reproducible numbers | Calculation only in `core/engine.py` on the accepted data; stored as `dataset.json` with hash per run |
+| Incomparable index | Complete-basket rule (section 3) |
+| Misleading conclusions | Demo-data note, provenance footer and disclaimer ("a deviation does not mean the CPI is wrong") are appended by code — the reporter cannot drop them |
+| Low-confidence results | Confidence computed in code: minimum of reporter, analyst and data quality scores, −0.05 per carried-forward dataset, −0.10 per fallback dataset, −0.10 per human override. Below `CONFIDENCE_THRESHOLD` (0.7) or with fallback data a human must approve |
+| Traceability | `audit.jsonl` per run: plan, amendments, fetches, quality checks, validator decisions, gates, re-use, investigations, human decisions (incl. reject with reason) |
+
+Human-in-the-loop is a pluggable approver (`--approve deferred | interactive | auto`):
+`deferred` (default) excludes escalated data and leaves low-confidence reports as `pending_approval` for the
+dashboard; `interactive` asks on the CLI; `auto` approves everything (demo / tests only).
+
+## 5. Mapping to Strands Agents
+
+| Process element | Strands building block | Status |
+|-----------------|------------------------|--------|
+| Planner → collector → validator → analyst → reporter with conditional edges and loops | `strands.multiagent.GraphBuilder` (conditional edges, cycles, `reset_on_revisit`, execution limits) | ✅ implemented |
+| Deterministic gates and calculation as graph nodes | Custom `FunctionNode(MultiAgentBase)` wrapping `flow/steps.py` | ✅ implemented |
+| Agent tools sharing the run state | `@tool` functions per role (`flow/tools.py`) on a shared `RunContext` | ✅ implemented |
+| Chat agent starting a monitoring run | Tool `run_monitoring_flow` of `REALBASKET-ORCHESTRATOR` | ✅ implemented |
+| Human review / approval | Own approver callback + dashboard; Strands **interrupts** not used yet | ⚠️ partial |
+| Memory across runs | Own `Memory` class (`data_store/memory.json`); no Strands session manager | ⚠️ own implementation |
+| One collector per category / hand-offs between collectors | Single collector agent for all datasets; no Swarm, no parallel collectors | ❌ open |
+| Source discovery (web search / MCP) | Fixed source registry | ❌ open |
+
+## 6. Remaining randomness vs. reproducibility
+
+Two runs may plan differently, re-use different datasets, pick different sources, retry a different number of
+times or investigate differently. For the same stored `dataset.json`, the numbers are always identical; the
+tests (`tests/test_flow.py`, scripted agents instead of LLMs) recompute the results from it.
+
+## 7. Open items
+
+| Item | Notes |
+|------|-------|
+| Real collectors | All sources except the optional Destatis GENESIS CPI are synthetic demo sources; `USE_DEMO_DATA` is not wired yet |
+| Scheduler + alerting | Monthly trigger and price alerts must be started externally today |
+| Official sub-indices | A focus category is compared with the headline CPI only, not with the matching CPI sub-index (e.g. energy) |
+| Native Strands interrupts | Replace the approver callback for human review / approval |
+| Parallel / specialised collectors | One collector per category, possibly as a Swarm |
+| Confidence tuning | Live runs tend to land close to the 0.7 threshold |
+| Storage backend | JSON files are fine for a single user; SQLite / PostgreSQL for concurrent or shared use |
+
+## 8. Starting point before the redesign (historical)
+
+Before the redesign RealBasket was a **fixed pipeline**: the chat prompt prescribed the steps
+(collect → calculate → explain), the tools returned deterministic demo data and the PDF reports were a fixed
+script. The only non-deterministic element was the wording of the answer and the choice of tool. The chat agent
+and `real-basket-pdf` still work this way; the monitoring flow above replaced the fixed pipeline for validated runs.
+
+```mermaid
+flowchart LR
+    U(["User question / CLI"]) --> O["Chat agent<br/>fixed 3-step prompt"]
+    O --> T1["collect_category_prices<br/>(food, rent, energy, mobility)"]
+    T1 --> T2["calculate_essential_vs_cpi"]
+    T2 --> T3["LLM explanation + disclaimer"]
+    S(["real-basket-pdf"]) --> PDF["Fixed set of PDF reports"]
+```
+
+| Aspect | Before | Now (monitoring flow) |
+|--------|--------|-----------------------|
+| Control flow | Fixed, defined by prompt / script | Graph with conditional edges and loops, decisions by agents |
+| Data sources | Fixed demo generator | Source registry with alternative sources, chosen per run |
+| Error handling | None (data could not fail) | Quality rules, retry loop, escalation, fallback to stored data |
+| Analysis depth | Same for every question | Investigation loop, re-planning, budgeted |
+| Output | Fixed answer / fixed PDF set | Reporter chooses chat / dashboard / PDF / alert; confidence gate + human approval |
