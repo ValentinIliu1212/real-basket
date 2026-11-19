@@ -8,6 +8,10 @@ Output (next to this script):
 The slides are written in German; the English decks translate every text via `texts_en.EN`
 (German text -> English text; `texts_en.SAME` lists language-neutral texts). A German text without translation
 stops the build with a list of the missing texts.
+
+Figures (result box, number of data checks) are NOT typed in: `facts()` computes them from the reference PDFs at
+build time with the same code as dashboard and agent, so the slides cannot go stale. Test counts are not shown
+(they change with every commit).
 """
 
 from __future__ import annotations
@@ -26,7 +30,8 @@ from pptx.util import Inches, Pt
 
 OUT = Path(__file__).resolve().parent
 sys.path.insert(0, str(OUT))
-from texts_en import EN, SAME  # noqa: E402
+sys.path.insert(0, str(OUT.parents[1] / "src"))
+from texts_en import EN, GROUPS_EN, SAME
 
 NAVY = RGBColor(0x1F, 0x3A, 0x5F)
 TEAL = RGBColor(0x2A, 0x9D, 0x8F)
@@ -48,6 +53,7 @@ class Raw(str):
 
 LANG = "de"
 MISSING: list[str] = []
+USED: set[str] = set()
 
 
 def tr(text: str) -> str:
@@ -56,7 +62,38 @@ def tr(text: str) -> str:
     if text not in EN:
         MISSING.append(text)
         return text
+    USED.add(text)
     return EN[text]
+
+
+def bi(de: str, en: str) -> Raw:
+    """Generated text in both languages (contains figures, so it cannot be a key of texts_en.EN)."""
+    return Raw(de if LANG == "de" else en)
+
+
+def fmt_num(value: float, sign: bool = True) -> str:
+    """+2,93 (de) / +2.93 (en)"""
+    text = f"{value:{'+' if sign else ''}.2f}"
+    return text.replace(".", ",") if LANG == "de" else text
+
+
+# --- figures from the reference data (computed at build time) ----------------------------------------
+FACTS: dict = {}
+
+
+def facts() -> dict:
+    """Latest result and data checks, computed with the same code as dashboard and agent (no typed-in numbers)."""
+    from real_basket.core.investigation import deviation_breakdown
+    from real_basket.data.basket import load_basket
+    from real_basket.schemas.models import CATEGORY_LABEL_DE, Category
+
+    b = load_basket()
+    res = deviation_breakdown(b.prices, b.cpi, b.weights)
+    driver = res["categories"][0]
+    return {"period": f"{b.real.periods[-1]:%m/%Y}", "essential": res["essential_yoy_pct"],
+            "cpi": res["cpi_yoy_pct"], "deviation": res["deviation_pp"], "driver_gap": driver["gap_pp"],
+            "driver_de": CATEGORY_LABEL_DE[Category(driver["category"])], "driver_en": GROUPS_EN[driver["category"]],
+            "checks": len(b.real.checks), "checks_ok": sum(c.ok for c in b.real.checks)}
 
 
 # --- helpers ---------------------------------------------------------------------------------------
@@ -215,35 +252,41 @@ def current_deck() -> Presentation:
                 "Agentischer Index der Grundlebenshaltungskosten im Vergleich zum amtlichen VPI\n"
                 "Streamlit · Strands Agents · MCP · Azure OpenAI · deterministische Rechenkerne")
 
+    f = FACTS
     s = slide(prs, "Was RealBasket heute leistet")
     bullets(s, 0.5, 1.3, 8.0, 5.6, [
         "Index der Grundlebenshaltungskosten (ECLI-Warenkorb, 5 Ausgabengruppen) vs. amtlicher VPI",
         "Echte Daten: deterministisch aus den PDF-Tabellen in reports/real-data geparst",
-        ("11 Nachrechen-Prüfungen (Summen, Lücken, ECLI, Jahresraten, VPI, Stadtmieten, Länder)", 1),
+        (bi(f"{f['checks']} Nachrechen-Prüfungen (Summen, Lücken, ECLI, Jahresraten, VPI, Stadtmieten, Länder)",
+            f"{f['checks']} re-checks (sums, gaps, ECLI, yearly rates, CPI, city rents, federal states)"), 1),
         ("Keine Demo-Daten, kein Fallback: ohne PDFs Fehlermeldung statt Zahlen", 1),
         "Einflussfaktoren: Beitrag jeder Ausgabengruppe zur Abweichung in Prozentpunkten",
         "Mieten der 15 größten Städte (Jan vs. Okt 2026); je Bundesland nur Abdeckung",
         "Methodenhinweise per RAG (BM25 + Embeddings), Zitate mit Datei und Seite",
         "Chat mit RealBasket: Strands-Agent auf Azure OpenAI (gpt-4o), Antworten auf Deutsch",
         "Alle Werkzeuge im MCP-Server realbasket (ein Prozess, Bereiche data · analysis · knowledge)",
-        "Grundsatz: Zahlen nur aus deterministischen Tools – das LLM rechnet nie selbst",
+        "Grundsatz: Zahlen nur aus deterministischen Tools; ein Guardrail prüft jede Zahl der Antwort",
     ], 15)
-    box(s, 8.9, 1.5, 3.9, 3.6, "Ergebnis 10/2026 (echte Daten)",
-        ["", "Grundbedarf: +2,93 %", "VPI: +2,83 %", "Abweichung: +0,11 PP", "",
-         "Größter Einflussfaktor:", "Verkehr / Mobilität (+0,94 PP)"], TEAL, size=17)
-    textbox(s, 8.9, 5.25, 3.9, 0.8, "Quelle: ECLI-Modellrechnung 2024–2026, Basis Nov 2024 = 100", 11, GREY)
+    box(s, 8.9, 1.5, 3.9, 3.6, bi(f"Ergebnis {f['period']} (echte Daten)", f"Result {f['period']} (real data)"),
+        ["", bi(f"Grundbedarf: {fmt_num(f['essential'])} %", f"Essentials: {fmt_num(f['essential'])} %"),
+         bi(f"VPI: {fmt_num(f['cpi'])} %", f"CPI: {fmt_num(f['cpi'])} %"),
+         bi(f"Abweichung: {fmt_num(f['deviation'])} PP", f"Deviation: {fmt_num(f['deviation'])} pp"), "",
+         "Größter Einflussfaktor:", bi(f"{f['driver_de']} ({fmt_num(f['driver_gap'])} PP)",
+                                       f"{f['driver_en']} ({fmt_num(f['driver_gap'])} pp)")], TEAL, size=17)
+    textbox(s, 8.9, 5.25, 3.9, 0.8, "Quelle: ECLI-Modellrechnung 2024–2026, Basis Nov 2024 = 100; Abweichung aus "
+            "ungerundeten Raten, Werte beim Erstellen der Folien berechnet", 11, GREY)
 
     s = slide(prs, "Komponenten", "Streamlit hostet Dashboard und Agenten; die Werkzeuge laufen im MCP-Server "
               "realbasket (Subprozess, stdio); nur das LLM ist extern")
     box(s, 0.5, 1.35, 12.3, 0.7, "Streamlit-UI  (ui/app.py)",
-        ["Index vs. VPI · Einflussfaktoren · Miete Städte · Methodenhinweise · "
-         "Chat mit RealBasket · Sidebar: Gewichte & PDF-Berichte"], NAVY, size=14)
+        [("Index vs. VPI · Einflussfaktoren · Miete Städte · Methodenhinweise · "
+          "Chat mit RealBasket · Sidebar: Gewichte & PDF-Berichte")], NAVY, size=14)
     box(s, 0.5, 2.4, 4.0, 1.0, "Orchestrator-Agent (Strands)",
         ["REALBASKET-ORCHESTRATOR · agents/orchestrator.py", "MCPClient · agents/mcp_clients.py"], TEAL)
-    box(s, 5.0, 2.4, 3.6, 1.0, "Price-Collector-Sub-Agent",
-        ["„Agents as Tools“ · collect_category_prices", "nutzt nur get_prices (MCP)"], TEAL)
-    box(s, 9.4, 2.4, 3.4, 1.0, "Azure OpenAI",
+    box(s, 5.0, 2.4, 3.6, 1.0, "Azure OpenAI",
         ["gpt-4o (Completion)", "text-embedding-3-large"], ORANGE)
+    box(s, 9.4, 2.4, 3.4, 1.0, "Zahlen-Guardrail",
+        ["agents/guardrail.py", "Zahlen der Antwort vs. Tool-Ergebnisse"], LIGHT, border=TEAL, size=12)
     box(s, 0.5, 3.75, 4.0, 1.0, "MCP-Server realbasket  (mcp_servers/)",
         ["data: get_basket · get_prices · get_cpi · calculate_index · data_checks",
          "analysis: investigate_deviation · get_regional_rents",
@@ -265,10 +308,9 @@ def current_deck() -> Presentation:
     arrow(s, 2.5, 2.05, 2.5, 2.4, NAVY, label="Chat", lx=2.6, ly=2.05)
     arrow(s, 4.75, 2.05, 4.75, 5.05, NAVY, label="Dashboard (ohne LLM)", lx=4.8, ly=4.75)
     arrow(s, 8.95, 2.05, 9.4, 4.0, NAVY, label="PDF", lx=8.7, ly=3.35)
-    arrow(s, 4.5, 2.9, 5.0, 2.9, TEAL)
-    arrow(s, 8.6, 2.9, 9.4, 2.9, ORANGE, both=True)
+    arrow(s, 11.1, 2.05, 11.1, 2.4, NAVY, label="Antwort prüfen", lx=11.2, ly=2.05)
+    arrow(s, 4.5, 2.9, 5.0, 2.9, ORANGE, both=True)
     arrow(s, 2.5, 3.4, 2.5, 3.75, PURPLE, label="MCP (stdio / HTTP)", lx=2.6, ly=3.42)
-    arrow(s, 5.6, 3.4, 4.3, 3.75, PURPLE)
     arrow(s, 1.5, 4.75, 1.5, 5.05, GREY)
     arrow(s, 3.6, 4.75, 3.9, 5.05, GREY)
     arrow(s, 4.3, 4.75, 6.6, 5.05, GREY)
@@ -283,14 +325,14 @@ def current_deck() -> Presentation:
         ("Orchestrator", ["Streamlit ruft den Agenten", "in-process auf; MCP-Server", "startet als Subprozess"]),
         ("Planung", ["gpt-4o wählt die Tools", "(Function Calling über", "die MCP-Tool-Schemas)"]),
         ("Rechnen", ["MCP-Tools rechnen deter-", "ministisch (core/, data/)", "bzw. suchen Hinweise"]),
-        ("Sub-Agent", ["Price-Collector fasst", "Preise je Ausgabengruppe", "zusammen"]),
         ("Antwort", ["Deutsch, Zahlen aus Tools,", "Quellen „Datei S. N“,", "Disclaimer"]),
-    ], y=1.7, h=2.3, fills=[NAVY, TEAL, ORANGE, PURPLE, TEAL, NAVY], size=13)
+        ("Prüfung", ["Guardrail gleicht jede", "Zahl mit den Tool-", "Ergebnissen ab"]),
+    ], y=1.7, h=2.3, fills=[NAVY, TEAL, ORANGE, PURPLE, NAVY, TEAL], size=13)
     bullets(s, 0.5, 4.5, 12.3, 2.4, [
-        "Dashboard-Tabs (Index vs. VPI, Einflussfaktoren) rufen core/ und data/ direkt auf – ohne LLM, "
-        "deshalb identische Zahlen in Dashboard und Chat",
-        "Nur echte Daten: Mieten je Bundesland und Nettogehälter sind nicht in den Quellen – der Agent sagt das, "
-        "statt zu schätzen",
+        ("Dashboard-Tabs (Index vs. VPI, Einflussfaktoren) rufen core/ und data/ direkt auf – ohne LLM, "
+         "deshalb identische Zahlen in Dashboard und Chat"),
+        ("Nur echte Daten: Mieten je Bundesland und Nettogehälter sind nicht in den Quellen – der Agent sagt das, "
+         "statt zu schätzen"),
         "Unveränderte Gewichts-Regler → exakte Warenkorbgewichte aus den PDFs",
     ], 16)
 
@@ -300,7 +342,8 @@ def current_deck() -> Presentation:
     textbox(s, 2.7, 4.55, 10, 0.4, "Hinweispfad (RAG)", 15, PURPLE, True)
     num = [("Text extrahieren", ["ingest.extract_pages", "(pypdf)"]),
            ("Tabellen parsen", ["Basiswarenkorb · Monats-", "kosten · ECLI/VPI · Mieten"]),
-           ("11 Prüfungen", ["Summen · Lücken · ECLI", "VPI · Mieten · Länder"]),
+           (bi(f"{FACTS['checks']} Prüfungen", f"{FACTS['checks']} checks"),
+            ["Summen · Lücken · ECLI", "VPI · Mieten · Länder"]),
            ("Warenkorb", ["load_basket()", "nur echte Daten"]),
            ("Rechenkern", ["Index · Abweichung", "Einflussfaktoren"])]
     rag = [("Passagen", ["Hinweise + Text-", "Tabellenzellen"]),
@@ -324,15 +367,15 @@ def current_deck() -> Presentation:
     table(s, 0.5, 1.4, 12.3, [
         ["Schicht", "Technologie", "Rolle"],
         ["UI", "Streamlit, Plotly", "Dashboard, Chat, PDF-Download"],
-        ["Agenten", "Strands Agents SDK (OpenAIModel / AzureOpenAIModel)", "Orchestrator + Collector-Sub-Agent"],
+        ["Agenten", "Strands Agents SDK (OpenAIModel / AzureOpenAIModel)", "Orchestrator-Agent + Zahlen-Guardrail"],
         ["Werkzeuge", "MCP Python SDK (MCPServer), Strands MCPClient", "Ein MCP-Server realbasket, stdio / HTTP"],
         ["LLM", "Azure OpenAI: gpt-4o, text-embedding-3-large", "Planung, Formulierung, Embeddings"],
         ["Daten", "pypdf, pandas, pydantic", "PDF-Parsing, Prüfungen, Modelle"],
         ["Wissen", "eigener BM25 + Embedding-Retriever, index.json", "Methodenhinweise mit Zitaten"],
         ["Berichte", "reportlab", "PDF-Berichte"],
         ["Konfiguration", "pydantic-settings, .env (Projektordner)", "Azure-Einstellungen, KNOWLEDGE_DIR"],
-        ["Qualität / Build", "pytest (45 Tests inkl. MCP-Contract-Tests), ruff, Poetry",
-         "Tests, Lint, Abhängigkeiten"],
+        ["Qualität / Build", "pytest (inkl. MCP-Contract-Tests), ruff, Poetry, GitHub Actions",
+         "Tests, Lint, CI, Abhängigkeiten"],
     ], [2.3, 5.6, 4.4], size=14, row_h=0.52)
 
     s = slide(prs, "Stärken und Grenzen")
@@ -344,13 +387,13 @@ def current_deck() -> Presentation:
         "Dashboard und Chat nutzen denselben Rechenkern",
         "Nur echte, nachgerechnete Daten – keine synthetischen Werte",
         "Offline nutzbar ohne LLM (Dashboard, BM25-Suche, PDFs)",
-        "45 automatische Tests inkl. MCP-Contract-Tests, Lint sauber",
+        "Automatische Tests inkl. MCP-Contract-Tests, Lint und CI",
     ], 16)
     box(s, 6.8, 1.35, 6.0, 0.55, "Grenzen", (), ORANGE, size=16)
     bullets(s, 6.8, 2.0, 6.0, 4.9, [
         "Ein MCP-Server für alle Bereiche: gemeinsame Rechte, gemeinsame Skalierung",
         "Agent läuft im Streamlit-Prozess: skaliert nur mit der UI; Dashboard nutzt core/ direkt",
-        "Sub-Agent eng gekoppelt, nicht separat versionier- oder deploybar",
+        "Guardrail prüft Zahlen, nicht Aussagen (falsche Zuordnung bleibt möglich)",
         "Datenstand fix (PDFs bis 10/2026), keine Live-Anbindung (Destatis)",
         "Keine Mieten je Bundesland, keine Nettogehälter in den Quellen",
         "Kein Auth-/Mandantenkonzept, Schlüssel in .env",
@@ -435,10 +478,11 @@ def proposal_deck() -> Presentation:
               "core/, data/, knowledge/ (src/real_basket/mcp_servers/)")
     table(s, 0.5, 1.45, 12.3, [
         ["Bereich (Modul)", "Tools", "Resources / Prompts", "Status"],
-        ["data (data_tools.py)", "get_basket() · get_prices(category, months) · get_cpi(months) · "
-         "calculate_index(weights, months) · data_checks()", "basket://weights · basket://checks", "umgesetzt"],
-        ["analysis (analysis_tools.py)", "investigate_deviation(level, category, region_type, months) · "
-         "get_regional_rents(region_type)", "–", "umgesetzt"],
+        ["data (data_tools.py)", ("get_basket() · get_prices(category, months) · get_cpi(months) · "
+                                  "calculate_index(weights, months) · data_checks()"),
+         "basket://weights · basket://checks", "umgesetzt"],
+        ["analysis (analysis_tools.py)", ("investigate_deviation(level, category, region_type, months) · "
+                                          "get_regional_rents(region_type)"), "–", "umgesetzt"],
         ["knowledge (knowledge_tools.py)", "search_methodology(query, year) · list_documents()",
          "doc://{datei}/seite/{n} · Prompt hinweis_zitieren", "umgesetzt"],
         ["report (geplant)", "render_pdf(kind, year)", "report://{name}.pdf", "offen (reports/pdf_report.py)"],
@@ -457,7 +501,7 @@ def proposal_deck() -> Presentation:
         "Ein Prozess: PDFs werden nur einmal geparst, schnellerer Start",
         "Ein Eintrag in Claude Desktop / VS Code, eine URL (MCP_URL)",
         "Weniger Betrieb und Konfiguration für die Demo",
-        "Collector-Sub-Agent erhält per Filter nur get_prices",
+        "Fach-Agenten erhalten per Filter nur ihre Tools (z. B. nur data)",
     ], 16)
     box(s, 6.8, 1.35, 6.0, 0.55, "Wann aufteilen", (), ORANGE, size=16)
     bullets(s, 6.8, 2.0, 6.0, 4.4, [
@@ -512,12 +556,12 @@ def proposal_deck() -> Presentation:
          "MCP", "umgesetzt"],
         ["ui/app.py: PDF-Download über reports/pdf_report.py", "Bereich report + Report-Agent",
          "MCP / A2A", "offen"],
-        ["collect_category_prices (Sub-Agent im selben Prozess)", "Price-Collector als eigener Dienst",
-         "A2A", "offen (nutzt MCP)"],
+        ["Collector-Sub-Agent (entfernt 11/2026; get_prices liefert die Zusammenfassung)",
+         "Price-Collector als eigener Dienst, sobald es Live-Quellen gibt", "A2A", "offen"],
         ["Orchestrator im Streamlit-Prozess", "Orchestrator-Dienst (A2A-Server)", "A2A", "offen"],
         ["Streamlit ruft den Agenten direkt auf", "Streamlit als A2A-Client; Dashboard über MCP",
          "A2A / MCP", "offen"],
-        ["core/, data/, Tests", "unverändert; 45 Tests inkl. MCP-Contract-Tests", "–", "umgesetzt"],
+        ["core/, data/, Tests", "unverändert; Tests inkl. MCP-Contract-Tests, CI", "–", "umgesetzt"],
     ], [5.0, 4.2, 1.3, 1.8], size=13, row_h=0.58)
 
     s = slide(prs, "Umsetzung mit Strands und dem MCP-SDK", "Links umgesetzt (mcp_servers/server.py), "
@@ -568,7 +612,7 @@ def proposal_deck() -> Presentation:
                         "Least Privilege: Bereiche bei Bedarf als eigene Server (--areas)"], NAVY),
         ("Determinismus & Qualität", ["Zahlen nur aus MCP-Tools", "Prüfergebnisse als Resource",
                                       "Contract-Tests je Tool-Schema (umgesetzt)",
-                                      "45 Tests gegen core/ und MCP"], TEAL),
+                                      "Zahlen-Guardrail für Antworten (umgesetzt)"], TEAL),
         ("Betrieb", ["Je Dienst ein Container (Azure Container Apps)", "Health-Checks, unabhängige Skalierung",
                      "OpenTelemetry-Tracing über alle Hops", "Versionierte Agent Cards und Tools"], PURPLE),
     ]):
@@ -579,7 +623,7 @@ def proposal_deck() -> Presentation:
     s = slide(prs, "Roadmap und Empfehlung")
     for i, (t, b, fill) in enumerate([
         ("Phase 1 · umgesetzt ✓", ["Ein MCP-Server realbasket", "Bereiche data · analysis · knowledge",
-                                   "Agent nutzt MCPClient (stdio / HTTP)", "45 Tests grün",
+                                   "Agent nutzt MCPClient (stdio / HTTP)", "Tests + CI grün",
                                    "Nutzbar in Claude Desktop / VS Code"], PURPLE),
         ("Phase 2 · nach dem Hackathon", ["Bereich report + Report-Agent", "Collector, Analyst, Methodik als",
                                           "A2A-Dienste mit Agent Cards", "Orchestrator als A2A-Server",
@@ -609,6 +653,7 @@ DECKS = {
 
 def main() -> None:
     global LANG
+    FACTS.update(facts())
     built = {}
     for lang, files in DECKS.items():
         LANG = lang
@@ -626,7 +671,11 @@ def main() -> None:
             locked.append(name)
     if locked:
         raise SystemExit(f"Close these files in PowerPoint and run again: {', '.join(locked)}")
-    print(f"Decks (de, en) written to {OUT}")
+    unused = sorted(set(EN) - USED)
+    if unused:
+        print(f"Note: {len(unused)} unused entries in texts_en.EN (can be removed): {unused}")
+    print(f"Decks (de, en) written to {OUT} - result {FACTS['period']}: {FACTS['essential']} % vs. "
+          f"{FACTS['cpi']} %, {FACTS['checks_ok']}/{FACTS['checks']} checks")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from real_basket.agents.guardrail import unverified_figures, warning_text
 from real_basket.agents.prompts import DISCLAIMER
 from real_basket.core import llm
 from real_basket.core.index import category_indices, compare_with_cpi, essential_index
@@ -98,10 +99,13 @@ for name, data in st.session_state.get("pdfs", {}).items():
     st.sidebar.download_button(name, data, file_name=name, mime="application/pdf", key=f"dl_{name}")
 
 settings = get_settings()
-has_key = llm.is_configured(settings)
+issues = llm.config_issues(settings)
+has_key = not issues["errors"]
 st.sidebar.header("⚙️ Status")
 st.sidebar.write(("✅" if has_key else "⚠️") + f" Agent: {llm.provider_label(settings)}"
-                 + ("" if has_key else " (kein API-Key / Endpoint)"))
+                 + ("" if has_key else " (nicht konfiguriert)"))
+for problem in issues["errors"] + issues["warnings"]:
+    st.sidebar.caption(f"⚠️ {problem}")
 
 # --- Header: the story in one screen --------------------------------------------------------------
 st.title("🧺 RealBasket")
@@ -116,7 +120,9 @@ driver = breakdown["categories"][0]
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Grundlebenshaltungskosten (ggü. Vorjahr)", f"{de(breakdown['essential_yoy_pct'])} %")
 c2.metric("Offizieller VPI (ggü. Vorjahr)", f"{de(breakdown['cpi_yoy_pct'])} %")
-c3.metric("Abweichung", f"{'+' if breakdown['deviation_pp'] >= 0 else ''}{de(breakdown['deviation_pp'])} PP")
+c3.metric("Abweichung", f"{'+' if breakdown['deviation_pp'] >= 0 else ''}{de(breakdown['deviation_pp'])} PP",
+          help="Aus den ungerundeten Raten berechnet; kann daher um 0,01 PP von der Differenz der gerundeten "
+               "Werte abweichen.")
 c4.metric("Größter Einflussfaktor", CATEGORY_LABEL[driver["category"]],
           f"{'+' if driver['gap_pp'] >= 0 else ''}{de(driver['gap_pp'])} PP", delta_color="inverse")
 st.info(f"Stand {pd.Timestamp(breakdown['period']):%m/%Y} · echte Daten (ECLI-Referenzwarenkorb, Destatis) · "
@@ -259,12 +265,15 @@ with tab_agent:
             st.markdown(msg["content"])
             if msg.get("tools"):
                 st.caption("🔧 " + " → ".join(msg["tools"]))
+            if msg.get("check"):
+                st.warning(msg["check"])
 
     prompt = st.chat_input("z. B. Steigen die Grundlebenshaltungskosten schneller als die offizielle Inflation?")
     prompt = prompt or st.session_state.pop("pending", None)
     if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").markdown(prompt)
+        check = ""
         with st.chat_message("assistant"), st.spinner("Der Agent wählt Werkzeuge und analysiert ..."):
             try:
                 if "agent" not in st.session_state:       # one agent per session -> follow-up questions work
@@ -275,9 +284,13 @@ with tab_agent:
                 before = len(agent.messages)
                 answer = str(agent(prompt))
                 tools = _tools_used(agent.messages[before:])
+                # guardrail: every figure must come from a tool result of the conversation
+                check = warning_text(unverified_figures(answer, agent.messages, prompt))
             except Exception as exc:  # noqa: BLE001 - show the error instead of crashing the demo
                 answer, tools = f"⚠️ Fehler des Agenten: {exc}", []
             st.markdown(answer)
             if tools:
                 st.caption("🔧 " + " → ".join(tools))
-        st.session_state.messages.append({"role": "assistant", "content": answer, "tools": tools})
+            if check:
+                st.warning(check)
+        st.session_state.messages.append({"role": "assistant", "content": answer, "tools": tools, "check": check})

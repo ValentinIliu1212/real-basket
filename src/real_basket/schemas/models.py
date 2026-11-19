@@ -14,9 +14,12 @@ class Category(str, Enum):
     COMMUNICATION = "communication"
 
 
+# German display names = the group names printed in the reference PDFs (Destatis COICOP wording, e.g. 07 "Verkehr").
+# Decision (review 11/2026): ONE name per group everywhere (UI, prompt, PDFs, slides) - "Verkehr", not
+# "Verkehr / Mobilität" - so citations, RAG passages and agent answers use the wording of the sources.
 CATEGORY_LABEL_DE = {
     Category.FOOD: "Lebensmittel", Category.HOUSING_ENERGY: "Wohnen / Energie",
-    Category.MOBILITY: "Verkehr / Mobilität", Category.HEALTH: "Gesundheit",
+    Category.MOBILITY: "Verkehr", Category.HEALTH: "Gesundheit",
     Category.COMMUNICATION: "Kommunikation",
 }
 
@@ -40,7 +43,8 @@ class PricePoint(BaseModel):
 
 class BasketWeights(BaseModel):
     """Weights of the essential basket. Must sum to 1.0 (default: expenditure shares of the reference basket,
-    see `RealDataset.weights`)."""
+    see `RealDataset.weights`). The calculation core normalises again (core.index.normalised_weights), so
+    objects built without validation (`model_construct`) cannot break the contributions."""
 
     weights: dict[Category, float]
 

@@ -11,6 +11,8 @@ from real_basket.schemas.models import CATEGORY_LABEL_DE, Category
 
 
 def last_months(points: list, months: int) -> list:
+    """The points of the most recent `months` periods - for OUTPUT only. Never slice prices before indexing: the
+    base period (first month) fixes the effective weights of the essential index (see core.index)."""
     keep = set(sorted({p.period for p in points})[-max(months, 1):])
     return [p for p in points if p.period in keep]
 

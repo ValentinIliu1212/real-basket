@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL_ID: str = "gpt-4o-mini"
-    AGENT_NAME: str = "REALBASKET-ORCHESTRATOR"   # chat agent; the collector sub-agent is REALBASKET-COLLECTOR
+    AGENT_NAME: str = "REALBASKET-ORCHESTRATOR"   # chat agent (the only agent; no sub-agents)
 
     # --- Azure OpenAI (used when OPENAI_API_TYPE=azure; see real_basket.core.llm) ------------------
     OPENAI_API_TYPE: str = ""                  # "" / openai -> api.openai.com | azure -> Azure OpenAI
@@ -39,8 +39,9 @@ class Settings(BaseSettings):
 
     # --- Reference documents: source of ALL figures (tables) and of the method notes (RAG) -----------
     KNOWLEDGE_DIR: str = "reports/real-data"   # ECLI reference PDFs
-    KNOWLEDGE_RETRIEVER: str = "auto"          # bm25 | embedding | auto (embedding if OPENAI_API_KEY set)
-    EMBEDDING_MODEL_ID: str = "text-embedding-3-small"
+    KNOWLEDGE_RETRIEVER: str = "auto"          # bm25 | embedding | auto (embedding if core.llm.is_configured())
+    EMBEDDING_MODEL_ID: str = "text-embedding-3-small"   # OpenAI only; Azure uses AZURE_EMBEDDING_MODEL. The
+                                                         # vectors are recomputed automatically on a model change
     KNOWLEDGE_TOP_K: int = 4                   # passages per search
 
     # --- MCP server `realbasket` (target architecture phase 1) -------------------------------------------

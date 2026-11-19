@@ -1,8 +1,14 @@
 """English texts of the architecture decks (used by build_decks.py).
 
-EN:   German slide text -> English slide text
-SAME: language-neutral texts (file, tool and product names) that stay as they are
+EN:        German slide text -> English slide text
+SAME:      language-neutral texts (file, tool and product names) that stay as they are
+GROUPS_EN: English names of the expenditure groups (for slide texts generated from the data)
 """
+
+GROUPS_EN: dict[str, str] = {
+    "food": "Food", "housing_energy": "Housing / energy", "mobility": "Transport", "health": "Health",
+    "communication": "Communication",
+}
 
 SAME: set[str] = {
     "Azure OpenAI", "gpt-4o (Completion)", "text-embedding-3-large", "index.py", "investigation.py",
@@ -29,7 +35,7 @@ SAME: set[str] = {
     "agents/tools.py: investigate_deviation, fetch_regional_rents", "Entra ID, Key Vault, Container Apps",
     "OpenTelemetry, Monitoring", "Prompts  (agents/prompts.py)", "MCP – Model Context Protocol",
     "Resource doc://…/seite", "Resource report://…", "search_methodology (MCP),",
-    "agents/tools.py: search_methodology + knowledge/",
+    "agents/tools.py: search_methodology + knowledge/", "agents/guardrail.py",
 }
 
 EN: dict[str, str] = {
@@ -47,8 +53,6 @@ EN: dict[str, str] = {
         "Essential living cost index (ECLI basket, 5 expenditure groups) vs. official CPI (VPI)",
     "Echte Daten: deterministisch aus den PDF-Tabellen in reports/real-data geparst":
         "Real data: parsed deterministically from the PDF tables in reports/real-data",
-    "11 Nachrechen-Prüfungen (Summen, Lücken, ECLI, Jahresraten, VPI, Stadtmieten, Länder)":
-        "11 re-checks (sums, gaps, ECLI, yearly rates, CPI, city rents, federal states)",
     "Keine Demo-Daten, kein Fallback: ohne PDFs Fehlermeldung statt Zahlen":
         "No demo data, no fallback: without the PDFs an error instead of numbers",
     "Einflussfaktoren: Beitrag jeder Ausgabengruppe zur Abweichung in Prozentpunkten":
@@ -61,20 +65,17 @@ EN: dict[str, str] = {
         "Chat with RealBasket: Strands agent on Azure OpenAI (gpt-4o), answers in German",
     "Alle Werkzeuge im MCP-Server realbasket (ein Prozess, Bereiche data · analysis · knowledge)":
         "All tools in the MCP server realbasket (one process, areas data · analysis · knowledge)",
-    "Grundsatz: Zahlen nur aus deterministischen Tools – das LLM rechnet nie selbst":
-        "Principle: numbers only from deterministic tools – the LLM never calculates",
-    "Ergebnis 10/2026 (echte Daten)": "Result 10/2026 (real data)",
-    "Grundbedarf: +2,93 %": "Essentials: +2.93 %",
-    "VPI: +2,83 %": "CPI: +2.83 %",
-    "Abweichung: +0,11 PP": "Deviation: +0.11 pp",
+    "Grundsatz: Zahlen nur aus deterministischen Tools; ein Guardrail prüft jede Zahl der Antwort":
+        "Principle: numbers only from deterministic tools; a guardrail checks every number of the answer",
     "Größter Einflussfaktor:": "Biggest driver:",
-    "Verkehr / Mobilität (+0,94 PP)": "Transport / mobility (+0.94 pp)",
-    "Quelle: ECLI-Modellrechnung 2024–2026, Basis Nov 2024 = 100":
-        "Source: ECLI model calculation 2024–2026, base Nov 2024 = 100",
+    "Quelle: ECLI-Modellrechnung 2024–2026, Basis Nov 2024 = 100; Abweichung aus ungerundeten Raten, Werte beim "
+    "Erstellen der Folien berechnet":
+        "Source: ECLI model calculation 2024–2026, base Nov 2024 = 100; deviation from unrounded rates, values "
+        "computed when the slides are built",
     "Komponenten": "Components",
     "Streamlit hostet Dashboard und Agenten; die Werkzeuge laufen im MCP-Server realbasket (Subprozess, stdio); "
     "nur das LLM ist extern":
-        "Streamlit hosts dashboard and agents; the tools run in the MCP server realbasket (subprocess, stdio); "
+        "Streamlit hosts dashboard and agent; the tools run in the MCP server realbasket (subprocess, stdio); "
         "only the LLM is external",
     "Streamlit-UI  (ui/app.py)": "Streamlit UI  (ui/app.py)",
     "Index vs. VPI · Einflussfaktoren · Miete Städte · Methodenhinweise · Chat mit RealBasket · "
@@ -82,9 +83,9 @@ EN: dict[str, str] = {
         "Index vs. CPI · Drivers · City rents · Method notes · Chat with RealBasket · "
         "Sidebar: weights & PDF reports",
     "Orchestrator-Agent (Strands)": "Orchestrator agent (Strands)",
-    "Price-Collector-Sub-Agent": "Price collector sub-agent",
-    "„Agents as Tools“ · collect_category_prices": "“Agents as tools” · collect_category_prices",
-    "nutzt nur get_prices (MCP)": "uses get_prices only (MCP)",
+    "Zahlen-Guardrail": "Number guardrail",
+    "Zahlen der Antwort vs. Tool-Ergebnisse": "numbers of the answer vs. tool results",
+    "Antwort prüfen": "Check answer",
     "MCP-Server realbasket  (mcp_servers/)": "MCP server realbasket  (mcp_servers/)",
     "Deutsch · Disclaimer · nur echte Daten, keine Schätzungen":
         "German · disclaimer · real data only, no estimates",
@@ -116,9 +117,10 @@ EN: dict[str, str] = {
     "MCP-Tools rechnen deter-": "MCP tools calculate deter-",
     "ministisch (core/, data/)": "ministically (core/, data/)",
     "bzw. suchen Hinweise": "or search method notes",
-    "Price-Collector fasst": "Price collector",
-    "Preise je Ausgabengruppe": "summarises prices per",
-    "zusammen": "expenditure group",
+    "Prüfung": "Check",
+    "Guardrail gleicht jede": "Guardrail matches every",
+    "Zahl mit den Tool-": "number against the tool",
+    "Ergebnissen ab": "results",
     "Antwort": "Answer",
     "Deutsch, Zahlen aus Tools,": "German, numbers from tools,",
     "Quellen „Datei S. N“,": "sources “file p. N”,",
@@ -142,7 +144,6 @@ EN: dict[str, str] = {
     "Tabellen parsen": "Parse tables",
     "Basiswarenkorb · Monats-": "Base basket · monthly",
     "kosten · ECLI/VPI · Mieten": "costs · ECLI/CPI · rents",
-    "11 Prüfungen": "11 checks",
     "Summen · Lücken · ECLI": "Sums · gaps · ECLI",
     "VPI · Mieten · Länder": "CPI · rents · states",
     "Warenkorb": "Basket",
@@ -172,7 +173,7 @@ EN: dict[str, str] = {
     "Rolle": "Role",
     "Dashboard, Chat, PDF-Download": "Dashboard, chat, PDF download",
     "Agenten": "Agents",
-    "Orchestrator + Collector-Sub-Agent": "Orchestrator + collector sub-agent",
+    "Orchestrator-Agent + Zahlen-Guardrail": "Orchestrator agent + number guardrail",
     "Werkzeuge": "Tools",
     "Ein MCP-Server realbasket, stdio / HTTP": "One MCP server realbasket, stdio / HTTP",
     "Planung, Formulierung, Embeddings": "Planning, wording, embeddings",
@@ -185,9 +186,9 @@ EN: dict[str, str] = {
     "pydantic-settings, .env (Projektordner)": "pydantic-settings, .env (project folder)",
     "Azure-Einstellungen, KNOWLEDGE_DIR": "Azure settings, KNOWLEDGE_DIR",
     "Qualität / Build": "Quality / build",
-    "pytest (45 Tests inkl. MCP-Contract-Tests), ruff, Poetry":
-        "pytest (45 tests incl. MCP contract tests), ruff, Poetry",
-    "Tests, Lint, Abhängigkeiten": "Tests, lint, dependencies",
+    "pytest (inkl. MCP-Contract-Tests), ruff, Poetry, GitHub Actions":
+        "pytest (incl. MCP contract tests), ruff, Poetry, GitHub Actions",
+    "Tests, Lint, CI, Abhängigkeiten": "Tests, lint, CI, dependencies",
     "Stärken und Grenzen": "Strengths and limitations",
     "Stärken": "Strengths",
     "Einfach: ein Deployment, ein MCP-Server-Prozess – ideal für die Demo":
@@ -201,15 +202,15 @@ EN: dict[str, str] = {
         "Real, re-checked data only – no synthetic values",
     "Offline nutzbar ohne LLM (Dashboard, BM25-Suche, PDFs)":
         "Works offline without LLM (dashboard, BM25 search, PDFs)",
-    "45 automatische Tests inkl. MCP-Contract-Tests, Lint sauber":
-        "45 automated tests incl. MCP contract tests, lint clean",
+    "Automatische Tests inkl. MCP-Contract-Tests, Lint und CI":
+        "Automated tests incl. MCP contract tests, lint and CI",
     "Grenzen": "Limitations",
     "Ein MCP-Server für alle Bereiche: gemeinsame Rechte, gemeinsame Skalierung":
         "One MCP server for all areas: shared permissions, shared scaling",
     "Agent läuft im Streamlit-Prozess: skaliert nur mit der UI; Dashboard nutzt core/ direkt":
         "Agent runs in the Streamlit process: scales only with the UI; dashboard uses core/ directly",
-    "Sub-Agent eng gekoppelt, nicht separat versionier- oder deploybar":
-        "Sub-agent tightly coupled, cannot be versioned or deployed separately",
+    "Guardrail prüft Zahlen, nicht Aussagen (falsche Zuordnung bleibt möglich)":
+        "Guardrail checks numbers, not statements (a wrong attribution remains possible)",
     "Datenstand fix (PDFs bis 10/2026), keine Live-Anbindung (Destatis)":
         "Fixed data (PDFs up to 10/2026), no live connection (Destatis)",
     "Keine Mieten je Bundesland, keine Nettogehälter in den Quellen":
@@ -309,7 +310,8 @@ EN: dict[str, str] = {
     "Ein Eintrag in Claude Desktop / VS Code, eine URL (MCP_URL)":
         "One entry in Claude Desktop / VS Code, one URL (MCP_URL)",
     "Weniger Betrieb und Konfiguration für die Demo": "Less operations and configuration for the demo",
-    "Collector-Sub-Agent erhält per Filter nur get_prices": "Collector sub-agent gets only get_prices via a filter",
+    "Fach-Agenten erhalten per Filter nur ihre Tools (z. B. nur data)":
+        "Specialist agents get only their tools via a filter (e.g. data only)",
     "Wann aufteilen": "When to split",
     "Least Privilege: nur knowledge braucht den LLM-Schlüssel (Embeddings)":
         "Least privilege: only knowledge needs the LLM key (embeddings)",
@@ -379,16 +381,16 @@ EN: dict[str, str] = {
     "ui/app.py: PDF-Download über reports/pdf_report.py": "ui/app.py: PDF download via reports/pdf_report.py",
     "Bereich report + Report-Agent": "Area report + report agent",
     "offen": "open",
-    "collect_category_prices (Sub-Agent im selben Prozess)":
-        "collect_category_prices (sub-agent in the same process)",
-    "Price-Collector als eigener Dienst": "Price collector as a separate service",
-    "offen (nutzt MCP)": "open (uses MCP)",
+    "Collector-Sub-Agent (entfernt 11/2026; get_prices liefert die Zusammenfassung)":
+        "Collector sub-agent (removed 11/2026; get_prices returns the summary)",
+    "Price-Collector als eigener Dienst, sobald es Live-Quellen gibt":
+        "Price collector as a separate service once there are live sources",
     "Orchestrator im Streamlit-Prozess": "Orchestrator in the Streamlit process",
     "Orchestrator-Dienst (A2A-Server)": "Orchestrator service (A2A server)",
     "Streamlit ruft den Agenten direkt auf": "Streamlit calls the agent directly",
     "Streamlit als A2A-Client; Dashboard über MCP": "Streamlit as A2A client; dashboard via MCP",
     "core/, data/, Tests": "core/, data/, tests",
-    "unverändert; 45 Tests inkl. MCP-Contract-Tests": "unchanged; 45 tests incl. MCP contract tests",
+    "unverändert; Tests inkl. MCP-Contract-Tests, CI": "unchanged; tests incl. MCP contract tests, CI",
     "Umsetzung mit Strands und dem MCP-SDK": "Implementation with Strands and the MCP SDK",
     "Links umgesetzt (mcp_servers/server.py), Mitte und rechts Skizze für Phase 2":
         "Left implemented (mcp_servers/server.py), middle and right a sketch for phase 2",
@@ -410,7 +412,7 @@ EN: dict[str, str] = {
     "Zahlen nur aus MCP-Tools": "Numbers only from MCP tools",
     "Prüfergebnisse als Resource": "Check results as a resource",
     "Contract-Tests je Tool-Schema (umgesetzt)": "Contract tests per tool schema (implemented)",
-    "45 Tests gegen core/ und MCP": "45 tests against core/ and MCP",
+    "Zahlen-Guardrail für Antworten (umgesetzt)": "Number guardrail for answers (implemented)",
     "Betrieb": "Operations",
     "Je Dienst ein Container (Azure Container Apps)": "One container per service (Azure Container Apps)",
     "Health-Checks, unabhängige Skalierung": "Health checks, independent scaling",
@@ -421,7 +423,7 @@ EN: dict[str, str] = {
     "Ein MCP-Server realbasket": "One MCP server realbasket",
     "Bereiche data · analysis · knowledge": "Areas data · analysis · knowledge",
     "Agent nutzt MCPClient (stdio / HTTP)": "Agent uses MCPClient (stdio / HTTP)",
-    "45 Tests grün": "45 tests green",
+    "Tests + CI grün": "Tests + CI green",
     "Nutzbar in Claude Desktop / VS Code": "Usable in Claude Desktop / VS Code",
     "Phase 2 · nach dem Hackathon": "Phase 2 · after the hackathon",
     "Collector, Analyst, Methodik als": "Collector, analyst, methodology as",

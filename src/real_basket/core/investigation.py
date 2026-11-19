@@ -4,9 +4,11 @@ All inputs are real data from the reference PDFs (reports/real-data)."""
 
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 
-from real_basket.core.index import category_indices, compare_with_cpi, essential_index
+from real_basket.core.index import category_indices, compare_with_cpi, essential_index, normalised_weights
 from real_basket.data.real_data import RealDataset
 from real_basket.schemas.models import BasketWeights, CpiPoint, PricePoint, RegionType
 
@@ -17,11 +19,12 @@ STATE_NOTE = ("Die Referenzberichte enthalten bewusst keine Miete je Bundesland:
 def deviation_breakdown(prices: list[PricePoint], cpi: list[CpiPoint], weights: BasketWeights) -> dict:
     """Essential index vs CPI for the latest month, incl. the exact contribution of every category.
 
+    Pass the FULL price series: the base period (first month) defines the effective weights (see core.index).
+    Weights are normalised to 1 (positive weights only), so the contributions always add up.
     contribution_pp: share of the essential YoY rate caused by the category (sums to the essential YoY).
     gap_pp: contribution minus the category's weight x CPI YoY (sums to the deviation).
     Categories are sorted by |gap_pp|, i.e. the biggest driver of the deviation comes first.
     """
-    used = {c.value: w for c, w in weights.weights.items() if w > 0}
     comparison = compare_with_cpi(essential_index(prices, weights), cpi).dropna()
     if comparison.empty:
         raise ValueError("Not enough months for a year-over-year comparison (need >= 13)")
@@ -29,9 +32,9 @@ def deviation_breakdown(prices: list[PricePoint], cpi: list[CpiPoint], weights: 
     prev = period - pd.DateOffset(months=12)
 
     cats = category_indices(prices)
-    missing = [c for c in used if c not in cats.columns]
-    if missing:
-        raise ValueError(f"No prices for categories {missing} in this basket")
+    used = normalised_weights(weights, cats.columns).to_dict()
+    if prev not in cats.index:
+        raise ValueError(f"No prices for {prev:%Y-%m} (12 months before {period:%Y-%m})")
     ess = (cats[list(used)] * pd.Series(used)).sum(axis=1)
     cpi_yoy = float(latest["cpi_yoy_pct"])
     categories = []
@@ -48,21 +51,31 @@ def deviation_breakdown(prices: list[PricePoint], cpi: list[CpiPoint], weights: 
         "essential_yoy_pct": round(float(latest["essential_yoy_pct"]), 2),
         "cpi_yoy_pct": round(cpi_yoy, 2),
         "deviation_pp": round(float(latest["deviation_pp"]), 2),
+        "deviation_note": "deviation_pp is computed from the unrounded rates; it can differ by 0.01 from the "
+                          "difference of the rounded rates",
         "categories": sorted(categories, key=lambda d: -abs(d["gap_pp"])),
     }
 
 
+def _minus_12_months(d: date) -> date:
+    return d.replace(year=d.year - 1)          # periods are first days of a month
+
+
 def item_changes(prices: list[PricePoint], category: str) -> list[dict]:
-    """Year-over-year change of every item of one category at the latest month."""
+    """Year-over-year change of every item of one category at the latest month (matched by date, not position).
+
+    Note: the reference data has ONE item per category (the modelled monthly cost of the group), so this level
+    shows the group's own cost change; finer items need additional sources."""
     result = []
     for item in sorted({p.item for p in prices if p.category.value == category}):
-        series = sorted((p for p in prices if p.category.value == category and p.item == item),
-                        key=lambda p: p.period)
-        if len(series) < 13:
+        by_period = {p.period: p for p in prices if p.category.value == category and p.item == item}
+        last = by_period[max(by_period)]
+        prev = by_period.get(_minus_12_months(last.period))
+        if prev is None:
             continue
-        last, prev = series[-1], series[-13]
         result.append({"item": item, "period": str(last.period), "price": last.price, "unit": last.unit,
-                       "yoy_pct": round((last.price / prev.price - 1) * 100, 2), "source": last.source})
+                       "price_prev_year": prev.price, "yoy_pct": round((last.price / prev.price - 1) * 100, 2),
+                       "source": last.source})
     return sorted(result, key=lambda d: -abs(d["yoy_pct"]))
 
 

@@ -92,7 +92,7 @@ def test_tools_return_error_without_pdfs(no_docs):
                        ("calculate_index", {}), ("data_checks", {}), ("investigate_deviation", {}),
                        ("get_regional_rents", {})]:
         res = call(name, args)
-        assert "error" in res and "Echte Daten nicht verfügbar" in res["error"], name
+        assert "error" in res and "Echte Daten nicht verf\u00fcgbar" in res["error"], name
 
 
 def test_knowledge_search_without_pdfs_returns_no_passages(no_docs):
@@ -115,6 +115,19 @@ def test_get_prices_rejects_unknown_category_and_cites_sources():
     assert "error" in call("get_prices", {"category": "luxury"})
     res = call("get_prices", {"category": "food", "months": 3})
     assert res["prices"] and all(p["source"] for p in res["prices"])
+    # deterministic summary (replaces the removed LLM collector sub-agent)
+    (s,) = res["summary"]
+    first, last = sorted(res["prices"], key=lambda p: p["period"])[::len(res["prices"]) - 1]
+    assert (s["first_value"], s["last_value"]) == (first["price"], last["price"])
+    assert s["change_pct"] == round((last["price"] / first["price"] - 1) * 100, 2)
+    assert s["yoy_pct_latest"] is not None                  # YoY uses the full series even with months=3
+
+
+@needs_docs
+def test_agent_has_no_sub_agent_tools():
+    from real_basket.agents import orchestrator
+
+    assert not hasattr(orchestrator, "make_collector_tool")
 
 
 @needs_docs
@@ -136,7 +149,7 @@ def test_data_checks_and_weights_resource():
 
 @needs_docs
 def test_document_page_resource():
-    first = sorted(REAL_DOCS.glob("*.pdf"))[0].name
+    first = min(REAL_DOCS.glob("*.pdf")).name
     contents = list(run(server.read_resource(f"doc://{first}/seite/1")))
     assert contents[0].content.strip()
 

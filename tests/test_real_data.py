@@ -31,6 +31,17 @@ def test_no_demo_module_left():
     assert {c.value for c in Category} == {"food", "housing_energy", "mobility", "health", "communication"}
 
 
+def test_one_german_name_per_group_as_in_the_pdfs():
+    """Review decision: the UI / prompt / PDF labels are exactly the group names of the reference PDFs."""
+    from real_basket.agents.prompts import ORCHESTRATOR_PROMPT
+    from real_basket.data.real_data import GROUPS
+    from real_basket.schemas.models import CATEGORY_LABEL_DE
+
+    assert CATEGORY_LABEL_DE == {cat: name for name, cat in GROUPS.items()}
+    assert "Mobilität" not in ORCHESTRATOR_PROMPT and "collect_category_prices" not in ORCHESTRATOR_PROMPT
+    assert "2,93" not in ORCHESTRATOR_PROMPT            # no real figure as format example (could be copied)
+
+
 @needs_docs
 def test_real_dataset_is_complete_and_rechecked():
     ds = load_real_data(REAL_DOCS)

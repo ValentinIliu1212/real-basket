@@ -32,7 +32,7 @@ mit von vom zu zum zur im in am an auf aus bei für fur als auch nur noch sich e
 hier diese dieser dieses diesen kein keine keinen über ueber nach vor bis je pro
 the a an and or of to in on for is are was were be by with as at from this that these those it its not no
 what which who why how does do did can could should would there their than then into about per
-""".split())
+""".split())  # noqa: SIM905 - a word block is easier to maintain than a list literal
 
 # English query terms -> German document vocabulary (keyword retriever only; embeddings are multilingual)
 GLOSSARY = {

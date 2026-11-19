@@ -57,3 +57,39 @@ def test_plain_openai_is_default(env):
 def test_placeholder_key_is_not_configured(env):
     s = env({**OPENAI, "OPENAI_API_KEY": "sk-..."})
     assert not llm.is_configured(s)
+    with pytest.raises(llm.LLMConfigError):
+        llm.require_configured(s)
+
+
+def test_clean_configs_have_no_issues(env):
+    assert llm.config_issues(env(OPENAI)) == {"errors": [], "warnings": []}
+    assert llm.config_issues(env({**OPENAI, **AZURE, "OPENAI_API_KEY": ""})) == {"errors": [], "warnings": []}
+
+
+def test_azure_key_duplicated_in_openai_key_is_warned(env):
+    s = env({**OPENAI, **AZURE, "OPENAI_API_KEY": "azure-key"})
+    issues = llm.config_issues(s)
+    assert not issues["errors"] and any("OPENAI_API_KEY" in w for w in issues["warnings"])
+    assert llm.client_kwargs(s)["api_key"] == "azure-key"            # Azure key goes to Azure only
+
+
+def test_azure_key_used_with_openai_provider_is_warned(env):
+    s = env({**OPENAI, "OPENAI_API_KEY": "0123456789abcdef0123456789abcdef"})     # looks like an Azure key
+    issues = llm.config_issues(s)
+    assert not issues["errors"] and any("does not look like an OpenAI key" in w for w in issues["warnings"])
+
+
+def test_incomplete_azure_config_fails_fast(env):
+    s = env({**OPENAI, **AZURE, "AZURE_OPENAI_ENDPOINT": "", "OPENAI_API_TYPE": "azure", "OPENAI_API_KEY": ""})
+    assert any("AZURE_OPENAI_ENDPOINT" in e for e in llm.config_issues(s)["errors"])
+    with pytest.raises(llm.LLMConfigError):
+        llm.require_configured(s)
+    assert llm.config_issues(env({**OPENAI, "OPENAI_API_TYPE": "azzure"}))["errors"]
+
+
+def test_orchestrator_refuses_to_start_without_provider(env):
+    from real_basket.agents.orchestrator import create_orchestrator
+
+    env({**OPENAI, "OPENAI_API_KEY": ""})
+    with pytest.raises(llm.LLMConfigError):
+        create_orchestrator()

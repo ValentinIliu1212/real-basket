@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from real_basket.mcp_servers.common import basket_info, basket_or_error, category_error, last_months, parse_category
+from real_basket.mcp_servers.common import basket_info, basket_or_error, category_error, parse_category
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -53,38 +53,43 @@ def get_regional_rents(region_type: str = "stadt") -> dict:
     return result
 
 
+LEVELS = ("category", "item", "region")
+
+
 def investigate_deviation(level: str = "category", category: str = "", region_type: str = "stadt",
                           months: int = 24) -> dict:
     """Drill down into why essential inflation deviates from the CPI (deterministic, latest month).
 
     Args:
-        level: 'category' (contribution and gap to CPI per group in pp), 'item' (YoY per item of `category`) or
-               'region' (city rents with strongest / weakest increase; 'bundesland' returns the coverage only)
+        level: 'category' (contribution and gap to CPI per group in pp), 'item' (YoY per item of `category`; the
+               reference data has one item per group) or 'region' (city rents with strongest / weakest increase;
+               'bundesland' returns the coverage only). Any other value returns an error.
         category: an expenditure group (for level 'item')
         region_type: 'stadt' or 'bundesland' (for level 'region')
-        months: months of history (>= 13)
+        months: kept for compatibility; the result always refers to the latest month and the full series
+                (base 11/2024 = 100), so it does not depend on `months`
     """
     from real_basket.core.investigation import deviation_breakdown, item_changes, regional_rent_changes
 
     basket, err = basket_or_error()
     if err:
         return err
-    months = max(months, 13)
-    level = level.lower()
+    level = level.lower().strip()
+    if level not in LEVELS:
+        return {"error": f"level must be one of {list(LEVELS)}", **basket_info(basket)}
     if level == "region":
         if region_type.lower() not in ("stadt", "bundesland"):
             return {"error": "region_type must be 'stadt' or 'bundesland'"}
         return {**regional_rent_changes(basket.real, region_type.lower()), "data_basis": basket.label}
-    prices = last_months(basket.prices, months)
     if level == "item":
         cat = parse_category(basket, category)
         if cat is None:
             return category_error(basket)
-        return {**basket_info(basket), "category": cat.value, "items": item_changes(prices, cat.value)}
+        return {**basket_info(basket), "category": cat.value, "items": item_changes(basket.prices, cat.value)}
     # breakdown last: its `categories` (drivers per group) must not be overwritten by the labels of basket_info
     info = basket_info(basket)
     return {**info, "category_labels": info.pop("categories"),
-            **deviation_breakdown(prices, last_months(basket.cpi, months), basket.weights)}
+            **deviation_breakdown(basket.prices, basket.cpi, basket.weights)}
 
 
 TOOLS = (investigate_deviation, get_regional_rents)
