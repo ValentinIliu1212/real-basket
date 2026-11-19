@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from real_basket.core.index import compare_with_cpi, essential_index
 from real_basket.core.investigation import deviation_breakdown, item_changes, regional_rent_changes
@@ -26,13 +26,17 @@ def test_breakdown_matches_index_for_custom_weights():
 def test_item_and_region_drill_down():
     items = item_changes(demo_prices(), "energy")
     assert items and all("yoy_pct" in i for i in items)
-    regions = regional_rent_changes("stadt")
-    assert regions["strongest"][0]["yoy_pct"] >= regions["weakest"][-1]["yoy_pct"]
+    for rtype in ("stadt", "bundesland"):
+        regions = regional_rent_changes(rtype)
+        assert regions["strongest"][0]["change_pct"] >= regions["weakest"][-1]["change_pct"]
 
 
 def test_investigate_tool_levels():
     from real_basket.agents.tools import investigate_deviation
+    from real_basket.data.basket import load_basket
 
-    assert investigate_deviation("category")["categories"]
-    assert investigate_deviation("item", "rent")["items"]
+    basket = load_basket()
+    res = investigate_deviation("category")
+    assert res["categories"] and res["data_source"] == basket.source
+    assert investigate_deviation("item", basket.categories[0].value)["items"]
     assert "error" in investigate_deviation("item", "x")

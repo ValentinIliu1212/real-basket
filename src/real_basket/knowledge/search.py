@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from real_basket.core import llm
-from real_basket.core.settings import Settings, get_settings
+from real_basket.core.settings import Settings, get_settings, resolve_path
 from real_basket.knowledge.ingest import ingest_documents
 
 INDEX_VERSION = 1
@@ -82,8 +82,8 @@ class KnowledgeBase:
     def __init__(self, doc_dir: str | Path | None = None, index_path: str | Path | None = None,
                  settings: Settings | None = None):
         self.settings = settings or get_settings()
-        self.doc_dir = Path(doc_dir or self.settings.KNOWLEDGE_DIR)
-        self.index_path = Path(index_path or Path(self.settings.DATA_DIR) / "knowledge" / "index.json")
+        self.doc_dir = resolve_path(doc_dir or self.settings.KNOWLEDGE_DIR)
+        self.index_path = Path(index_path or resolve_path(self.settings.DATA_DIR) / "knowledge" / "index.json")
         self._index: dict | None = None
 
     # --- index ----------------------------------------------------------------------------------

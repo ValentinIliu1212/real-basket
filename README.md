@@ -7,31 +7,38 @@
 **Important:** A deviation does not mean that the official CPI is wrong. The two indices use different
 baskets of goods and different weightings.
 
-> ⚠️ **All numbers are currently synthetic demo data** (rough orders of magnitude) — see [Next steps](#next-steps-hackathon-backlog).
+> **Data:** the essential basket, the CPI (VPI) and the rents of the 15 largest cities are **real data** read
+> deterministically from the reference PDFs in `reports/real-data` (ECLI model calculation: Destatis EVS 2023
+> expenditure + official price indices, 11/2024–10/2026) and re-checked in code. Rents per federal state and net
+> salaries are still **synthetic demo data** and labelled as such. The UI is fully German.
 
 ## Demo in 3 minutes
 
-1. `poetry run streamlit run src/real_basket/ui/app.py` → the header shows essential inflation, CPI, the
-   deviation and its **biggest driver** at a glance.
-2. Move the **basket weights** in the sidebar → index, deviation and drivers update immediately.
-3. **🧩 Drivers**: which category causes the deviation (contributions add up exactly to the deviation).
-4. **🏠 Miete regional / 💶 Nettogehalt**: rents per state / city, rent burden in % of the net salary.
-5. **📚 Method notes (RAG)**: search the unstructured reference PDFs, e.g. *"Ist Wohnen / Energie die
+1. `poetry run streamlit run src/real_basket/ui/app.py` → the header shows essential inflation, VPI, the
+   deviation and its **biggest driver** at a glance (real data 10/2026: 2,93 % vs. 2,83 %, +0,11 PP, driver
+   Verkehr / Mobilität). The expander **Datenprüfung** lists the 9 re-checks of the PDF import.
+2. Move the **basket weights** in the sidebar → index, deviation and drivers update immediately (untouched
+   sliders = exact expenditure shares of the reference basket). Switch **Datenquelle** real ↔ demo; the chat
+   agent follows that choice (a new chat starts).
+3. **🧩 Treiber**: which category causes the deviation (contributions add up exactly to the deviation).
+4. **🏠 Miete regional / 💶 Nettogehalt**: rents per state (demo) / city (real), rent burden (demo).
+5. **📚 Methodenhinweise (RAG)**: search the unstructured reference PDFs, e.g. *"Ist Wohnen / Energie die
    Nettokaltmiete?"* → passage with file and page.
-6. **🤖 Ask the agent**: click an example question; the answer shows which tools the agent chose.
-7. Sidebar **📄 PDF reports**: download the German PDF reports.
+6. **🤖 Agent fragen**: click an example question; the answer (always German) shows which tools were used.
+7. Sidebar **📄 PDF-Berichte**: download the reference PDFs and the generated German demo reports.
 
 ## Features
 
 | Feature | Description |
 |---------|-------------|
-| Essential living cost index | Weighted index of food, rent, energy and mobility (base month = 100), adjustable weights |
-| CPI comparison | YoY rate of the essential index vs. official CPI, deviation in percentage points |
+| Essential living cost index | Weighted index of the basket groups (real: Lebensmittel, Wohnen / Energie, Verkehr, Gesundheit, Kommunikation; demo: food, rent, energy, mobility), base month = 100, adjustable weights |
+| Real-data import | `data/real_data.py`: tables of the reference PDFs parsed without LLM, 9 re-checks (sums, gaps, printed ECLI and yearly rates recomputed by the engine, …) |
+| CPI comparison | YoY rate of the essential index vs. official VPI, deviation in percentage points |
 | Deviation drivers | Exact contribution of every category to the deviation (`core/investigation.py`) |
-| Regional rents | Rent per m² (net cold) for all **16 federal states** and the **15 largest cities**, monthly |
-| Net salaries & rent burden | Ø monthly net salary per state; share needed for the rent of a flat (default 70 m²) |
-| PDF reports | One PDF per year + average rent + net salary / rent burden + CPI report (German, EUR) |
-| AI agent | Strands chat agent that decides itself which tools to call; numbers only from deterministic tools |
+| Regional rents | 15 largest cities: real asking rents Jan vs. Oct 2026 (immowelt, from the reference PDF); 16 federal states: demo |
+| Net salaries & rent burden | Ø monthly net salary per state; share needed for the rent of a flat (default 70 m²) – demo |
+| PDF reports | One PDF per year + average rent + net salary / rent burden + CPI report (German, EUR) – demo |
+| AI agent | Strands chat agent that decides itself which tools to call; numbers only from deterministic tools; answers in German |
 | Method notes (RAG) | Search over method notes and caveats of reference PDFs (`reports/real-data`), cited with file + page. Context only – figures never come from text search |
 
 ## Architecture
@@ -66,7 +73,10 @@ src/real_basket/
 │   ├── investigation.py # deviation drivers, drill-down by item / region
 │   ├── rents.py / income.py  # Ø rents, net salaries, rent burden
 │   └── settings.py      # .env based configuration
-├── data/demo_data.py # synthetic demo data
+├── data/
+│   ├── real_data.py     # deterministic import + re-checks of the reference PDF tables
+│   ├── basket.py        # load_basket(): DATA_SOURCE auto | real | demo
+│   └── demo_data.py     # synthetic demo data
 ├── knowledge/       # RAG: ingest.py (passages), search.py (index, BM25 / embeddings, CLI)
 ├── reports/pdf_report.py  # PDF generation (reportlab)
 ├── schemas/models.py
@@ -109,16 +119,22 @@ poetry run streamlit run src/real_basket/ui/app.py
 poetry run real-basket-cli "Are basic living costs rising faster than official inflation? Why?"
 poetry run real-basket-cli "In welchem Bundesland ist die Mietbelastung am höchsten?"
 
-# PDF reports for the last 60 months (written to ./reports, git-ignored)
+# PDF reports (demo data) for the last 60 months (written to ./reports, git-ignored)
 poetry run real-basket-pdf --months 60 --out reports
 
-# Method notes of the reference PDFs (put them into ./reports/real-data, git-ignored)
+# Method notes of the reference PDFs (versioned in ./reports/real-data)
 poetry run real-basket-knowledge --rebuild
 poetry run real-basket-knowledge --query "Ist Wohnen / Energie die Nettokaltmiete?"
 ```
 
-Settings in `.env`: `OPENAI_API_KEY`, `OPENAI_MODEL_ID`, `KNOWLEDGE_DIR` (default `reports/real-data`),
-`KNOWLEDGE_RETRIEVER` (`auto` | `bm25` | `embedding`), `EMBEDDING_MODEL_ID`, `KNOWLEDGE_TOP_K` (4).
+Settings in `.env`: `DATA_SOURCE` (`auto` | `real` | `demo`), `OPENAI_API_KEY`, `OPENAI_MODEL_ID`,
+`KNOWLEDGE_DIR` (default `reports/real-data`), `KNOWLEDGE_RETRIEVER` (`auto` | `bm25` | `embedding`),
+`EMBEDDING_MODEL_ID`, `KNOWLEDGE_TOP_K` (4). Relative paths are resolved against the project root if they do not
+exist in the current folder, and `.env` is read from the project root – so the app works from any folder.
+
+> **"0 Dokumente" in the method-notes tab?** Up to commit `cd9772a` the whole `/reports` folder was git-ignored,
+> so the reference PDFs never reached other machines. They are now versioned (`reports/real-data/*.pdf`):
+> `git pull` and restart Streamlit.
 
 **Azure OpenAI** instead of api.openai.com (an Azure key sent to OpenAI fails with `401 Incorrect API key`):
 
@@ -139,13 +155,13 @@ Without PDFs the search returns no passages; everything else works unchanged.
 
 | Tab | Content |
 |-----|---------|
-| Header | Essential inflation, CPI, deviation and biggest driver of the latest month + disclaimer |
-| 📈 Index vs. CPI | Both indices (base = 100), YoY rates and deviation (pp) |
-| 🧩 Drivers | Contribution of each category to the deviation, index per category |
-| 🏠 Miete regional | Rent per m² per state / city: current, Ø period, YoY, comparison chart, Ø per year |
-| 💶 Nettogehalt | Ø net salary per state, rent burden with flat-size slider, tables per year |
-| 📚 Method notes (RAG) | Index status and search over the reference PDFs with file + page |
-| 🤖 Ask the agent | Chat with follow-up questions, example questions, tools used per answer |
+| Header | Essential inflation, VPI, deviation and biggest driver of the latest month + disclaimer + data check |
+| 📈 Index vs. VPI | Both indices (base = 100), YoY rates and deviation (PP); real data: monthly costs per group |
+| 🧩 Treiber | Contribution of each category to the deviation, index per category |
+| 🏠 Miete regional | Cities: real asking rents Jan/Oct 2026; states: demo rent per m², YoY, comparison chart |
+| 💶 Nettogehalt | Ø net salary per state, rent burden with flat-size slider, tables per year (demo) |
+| 📚 Methodenhinweise (RAG) | Index status and search over the reference PDFs with file + page |
+| 🤖 Agent fragen | Chat (German) with follow-up questions, example questions, tools used per answer |
 
 ### PDF reports
 
@@ -159,7 +175,12 @@ Without PDFs the search returns no passages; everything else works unchanged.
 ## Methodology
 
 - **Category index:** mean of item price relatives vs. base month (= 100).
-- **Essential index:** weighted sum of category indices (default: rent 40 %, food 30 %, energy 15 %, mobility 15 %).
+- **Essential index:** weighted sum of category indices. Default weights – real data: expenditure shares of the
+  ECLI reference basket (base amounts 11/2024 ÷ 2.174 €: Wohnen / Energie 52,3 %, Lebensmittel 20,1 %, Verkehr
+  16,6 %, Kommunikation 6,5 %, Gesundheit 4,5 %); demo: rent 40 %, food 30 %, energy 15 %, mobility 15 %.
+- **Real-data re-checks** (`data/real_data.py`): base amounts sum to the total, first month = base basket, no
+  gaps, row sums, ECLI recomputed by the engine = printed ECLI (≤ 0,05), both ECLI tables agree, printed yearly
+  rates reproduced, repeated values identical across reports, VPI present for every month.
 - **CPI comparison:** YoY rates of both indices; deviation = essential YoY − CPI YoY in percentage points (pp).
 - **Drivers:** contribution_pp = weight × change of the category index ÷ previous essential index × 100;
   gap_pp = contribution − weight × CPI YoY. The gaps add up to the deviation.
@@ -170,11 +191,11 @@ Without PDFs the search returns no passages; everything else works unchanged.
 
 ## Next steps (hackathon backlog)
 
-> ⚠️ **Current state:** all prices, rents, net salaries and CPI values are **synthetic demo data** generated in
-> `src/real_basket/data/demo_data.py`. The numbers shown in the UI, PDFs and agent answers are *not* real yet.
+> ⚠️ **Current state:** basket, VPI and city rents are real data from the reference PDFs. Rents per federal state,
+> net salaries and the generated PDF reports are still **synthetic demo data** (`src/real_basket/data/demo_data.py`).
 
-### 1. Replace the demo data with real sources
-Replace `demo_prices()`, `demo_cpi()`, `demo_regional_rents()` and `demo_net_salaries()` with real collectors
+### 1. Replace the remaining demo data with real sources
+Replace `demo_regional_rents()` and `demo_net_salaries()` (and live updates of the basket) with real collectors
 (one module per source under `src/real_basket/data/`) that return `PricePoint` / `CpiPoint` / `IncomePoint`
 objects, so the calculations stay unchanged.
 
@@ -188,9 +209,9 @@ objects, so the calculations stay unchanged.
 | Energy | Bundesnetzagentur, tariff comparison portals, Destatis energy sub-indices |
 | Mobility | Tankerkoenig fuel price API, public transport tariffs (Deutschlandticket) |
 
-- [ ] Import the monthly tables of the reference PDFs (`reports/real-data`) as a data source, re-checked in code
-- [ ] Implement `fetch_official_cpi` with the Destatis GENESIS API; switch via `USE_DEMO_DATA=false`
-- [ ] Show sources in the dashboard and the PDFs
+- [x] Import the monthly tables of the reference PDFs (`reports/real-data`) as a data source, re-checked in code
+- [ ] Implement `fetch_official_cpi` with the Destatis GENESIS API (live updates beyond 10/2026)
+- [ ] Generate the PDF reports from the real basket
 
 ### 2. Later (out of hackathon scope)
 - [ ] Scheduled monitoring with validation, human approval and audit trail (a first version existed as a
@@ -206,4 +227,5 @@ objects, so the calculations stay unchanged.
 3. Run `poetry run ruff check .` and `poetry run pytest` before pushing.
 4. Open a merge/pull request against `main`.
 
-Never commit `.env` or API keys. Generated PDFs (`/reports`) and the local index (`/data_store`) are git-ignored.
+Never commit `.env` or API keys. Generated PDFs (`/reports/*.pdf`) and the local index (`/data_store`) are
+git-ignored; the reference PDFs in `reports/real-data` are versioned (source of the real data).

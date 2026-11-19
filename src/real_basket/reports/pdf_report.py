@@ -30,6 +30,9 @@ CATEGORY_DE = {
     Category.RENT: "Miete",
     Category.ENERGY: "Energie",
     Category.MOBILITY: "Mobilität",
+    Category.HOUSING_ENERGY: "Wohnen / Energie",
+    Category.HEALTH: "Gesundheit",
+    Category.COMMUNICATION: "Kommunikation",
 }
 
 

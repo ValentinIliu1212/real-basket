@@ -9,10 +9,17 @@
 **Non-deterministic shell, deterministic core.**
 
 - **LLM agent decides:** which tools a question needs, in which order, how deep to drill down, and how to word
-  the answer (in the user's language).
+  the answer (always German).
 - **Code decides:** every number (index, YoY rates, deviation, driver contributions, rent burden). An LLM never
   calculates an inflation rate. The disclaimer is part of the system prompt and always shown in the dashboard.
-- **Reference documents** (unstructured PDFs) give context and caveats only, never figures.
+- **Reference documents** (`reports/real-data`) serve two separate purposes:
+  - *Tables → real data* (`data/real_data.py`): parsed deterministically (no LLM, no text search), 9 re-checks in
+    code (sums, gaps, printed ECLI and yearly rates reproduced by the engine, consistency across reports).
+  - *Prose → method notes (RAG)*: context and caveats only, never figures.
+- **One data source per session:** the sidebar choice (real | demo, default `DATA_SOURCE=auto`) feeds the
+  dashboard *and* the agent tools (`data.basket.set_data_source`); switching starts a new chat so the memory never
+  mixes real and demo numbers. Untouched weight sliders use the exact (unrounded) basket weights, so dashboard,
+  agent and printed ECLI agree.
 
 ## 2. Process diagram
 
@@ -26,7 +33,9 @@ flowchart TD
     O --> COL["collect_category_prices<br/>→ REALBASKET-COLLECTOR (agent) → fetch_prices"]
     O --> K["search_methodology<br/>(RAG: knowledge/, BM25 / embeddings)"]
     K --> PDF[("reports/real-data/*.pdf<br/>method notes, caveats")]
-    C & I & R & COL & K --> A(["Answer: headline + max. 5 bullets,<br/>demo-data note, citations [file p. N], disclaimer"])
+    C & I & R & COL --> B[("load_basket()<br/>real: PDF tables, re-checked · demo")]
+    B --> PDF
+    C & I & R & COL & K --> A(["Answer (German): headline + max. 5 bullets,<br/>data basis real/demo, citations [Datei S. N], disclaimer"])
 ```
 
 Typical "why" path: `investigate_deviation(level='category')` → category with the largest |gap_pp| →
@@ -57,11 +66,13 @@ The dashboard header shows the category with the largest |gap_pp| as "biggest dr
 |------|------------|
 | Hallucinated numbers | All figures from deterministic tools; prompt forbids own calculations |
 | Misreading the deviation as "CPI is wrong" | Disclaimer in prompt, dashboard header and PDFs |
-| Demo data taken as real | Every tool returns `source: demo`; agent must say so; dashboard labels demo data |
+| Demo data taken as real | Every tool returns `data_source` real / demo; agent must name the data basis; dashboard labels demo data |
+| Misparsed PDF tables | 9 deterministic re-checks, shown in the dashboard (Datenprüfung); `auto` falls back to demo if PDFs are unreadable |
+| PDFs missing on another machine | Reference PDFs versioned in git; relative paths resolved against the project root |
 | Figures quoted from PDFs | Numeric table cells are not indexed; passages are context only |
 | No API key during the demo | Dashboard, drivers, PDFs and method-note search (BM25) work offline; only the chat needs a key |
 
 ## 6. Out of scope for the hackathon
 
 Scheduled monitoring with validation / retry loops, human approval, audit trail and source memory (see git
-history `f9344ef`), real data collectors, import of the reference PDF tables as a data source.
+history `f9344ef`), live data collectors (Destatis GENESIS), real federal-state rents and net salaries.

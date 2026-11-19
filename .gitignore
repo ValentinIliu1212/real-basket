@@ -8,5 +8,6 @@ dist/
 sessions/
 .streamlit/secrets.toml
 .pydevproject
-/reports/
+/reports/*
+!/reports/real-data/
 /data_store/

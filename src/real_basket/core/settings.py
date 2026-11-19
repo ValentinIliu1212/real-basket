@@ -1,10 +1,25 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Project root (folder with pyproject.toml): src/real_basket/core/settings.py -> parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def resolve_path(path: str | Path) -> Path:
+    """Relative paths (DATA_DIR, KNOWLEDGE_DIR, ...) are resolved against the current working directory if they
+    exist there, otherwise against the project root - so `streamlit run` works from any folder."""
+    p = Path(path)
+    if p.is_absolute() or p.exists():
+        return p
+    return PROJECT_ROOT / p
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # .env in the project root, overridden by a .env in the current working directory
+    model_config = SettingsConfigDict(env_file=(str(PROJECT_ROOT / ".env"), ".env"), env_file_encoding="utf-8",
+                                      extra="ignore")
 
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL_ID: str = "gpt-4o-mini"
@@ -20,6 +35,8 @@ class Settings(BaseSettings):
 
     DESTATIS_GENESIS_TOKEN: str = ""
     USE_DEMO_DATA: bool = True
+    # Essential basket: auto = real data from the reference PDFs (KNOWLEDGE_DIR) if readable, else demo | real | demo
+    DATA_SOURCE: str = "auto"
 
     DATA_DIR: str = "data_store"               # local cache (method-note index)
 

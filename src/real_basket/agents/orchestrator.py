@@ -48,8 +48,9 @@ def create_model(temperature: float = 0.2) -> OpenAIModel:
 
 @tool
 def collect_category_prices(category: str) -> str:
-    """Delegate price collection for one category ('food', 'rent', 'energy', 'mobility')
-    to the specialised Price Collector agent and return its summary."""
+    """Delegate price collection for one category of the current basket (real data: 'food', 'housing_energy',
+    'mobility', 'health', 'communication'; demo data: 'food', 'rent', 'energy', 'mobility') to the specialised
+    Price Collector agent and return its summary."""
     collector = Agent(
         name="REALBASKET-COLLECTOR",
         system_prompt=COLLECTOR_PROMPT,

@@ -9,6 +9,17 @@ class Category(str, Enum):
     RENT = "rent"
     ENERGY = "energy"
     MOBILITY = "mobility"
+    # categories of the ECLI reference basket (reports/real-data): "Wohnen / Energie" is one group there
+    HOUSING_ENERGY = "housing_energy"
+    HEALTH = "health"
+    COMMUNICATION = "communication"
+
+
+CATEGORY_LABEL_DE = {
+    Category.FOOD: "Lebensmittel", Category.RENT: "Miete", Category.ENERGY: "Energie",
+    Category.MOBILITY: "Verkehr / Mobilität", Category.HOUSING_ENERGY: "Wohnen / Energie",
+    Category.HEALTH: "Gesundheit", Category.COMMUNICATION: "Kommunikation",
+}
 
 
 class RegionType(str, Enum):

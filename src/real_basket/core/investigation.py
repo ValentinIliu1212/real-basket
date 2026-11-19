@@ -26,6 +26,9 @@ def deviation_breakdown(prices: list[PricePoint], cpi: list[CpiPoint], weights: 
     prev = period - pd.DateOffset(months=12)
 
     cats = category_indices(prices)
+    missing = [c for c in used if c not in cats.columns]
+    if missing:
+        raise ValueError(f"No prices for categories {missing} in this basket")
     ess = (cats[list(used)] * pd.Series(used)).sum(axis=1)
     cpi_yoy = float(latest["cpi_yoy_pct"])
     categories = []
@@ -60,8 +63,29 @@ def item_changes(prices: list[PricePoint], category: str) -> list[dict]:
     return sorted(result, key=lambda d: -abs(d["yoy_pct"]))
 
 
-def regional_rent_changes(region_type: str = "bundesland", months: int = 13, top: int = 5) -> dict:
-    """Regions with the strongest / weakest rent increase (YoY). Source: demo regional rents."""
+def real_city_rent_changes(top: int = 5) -> dict | None:
+    """Published asking rents of the 15 largest cities (reference PDF, immowelt), Jan vs. Oct 2026; None if
+    the reference PDFs are not available."""
+    from real_basket.data.real_data import RealDataError, load_real_data
+
+    try:
+        cities = load_real_data().city_rents
+    except (RealDataError, OSError, ValueError):
+        return None
+    if not cities:
+        return None
+    changes = sorted(({"region": c["city"], "bundesland": c["state"], "rent_eur_per_m2": c["rent_oct_eur_m2"],
+                       "change_pct": c["change_pct"]} for c in cities), key=lambda d: -d["change_pct"])
+    return {"region_type": "stadt", "change": "Okt 2026 vs. Jan 2026 (Angebotskaltmiete)",
+            "strongest": changes[:top], "weakest": changes[-top:], "source": cities[0]["source"]}
+
+
+def regional_rent_changes(region_type: str = "bundesland", months: int = 13, top: int = 5,
+                          use_real: bool = True) -> dict:
+    """Regions with the strongest / weakest rent increase. Cities: real asking rents from the reference PDF if
+    available and `use_real`; federal states: demo data (the reference PDFs contain no verified state series)."""
+    if use_real and region_type == RegionType.CITY.value and (real := real_city_rent_changes(top)):
+        return real
     rents = demo_regional_rents(months=max(months, 13), region_type=RegionType(region_type))
     by_region: dict[str, list] = {}
     for p in rents:
@@ -70,7 +94,7 @@ def regional_rent_changes(region_type: str = "bundesland", months: int = 13, top
     for region, pts in by_region.items():
         pts.sort(key=lambda p: p.period)
         changes.append({"region": region, "rent_eur_per_m2": round(pts[-1].price, 2),
-                        "yoy_pct": round((pts[-1].price / pts[-13].price - 1) * 100, 2)})
-    changes.sort(key=lambda d: -d["yoy_pct"])
-    return {"region_type": region_type, "strongest": changes[:top], "weakest": changes[-top:],
-            "source": "demo"}
+                        "change_pct": round((pts[-1].price / pts[-13].price - 1) * 100, 2)})
+    changes.sort(key=lambda d: -d["change_pct"])
+    return {"region_type": region_type, "change": "ggü. Vorjahresmonat", "strongest": changes[:top],
+            "weakest": changes[-top:], "source": "demo"}
