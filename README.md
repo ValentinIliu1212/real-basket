@@ -47,9 +47,11 @@ baskets of goods and different weightings.
 
 Design rationale: [docs/process-redesign.md](docs/process-redesign.md).
 
-Architecture slides (German) in `docs/architecture/`: current state (`RealBasket_Architektur_Ist.pptx`) and a
-target proposal with MCP servers and A2A agents (`RealBasket_Architektur_Vorschlag_MCP_A2A.pptx`). Regenerate
-with `poetry run python docs/architecture/build_decks.py`.
+Architecture slides in `docs/architecture/`, German and English: current state (`RealBasket_Architektur_Ist.pptx` /
+`RealBasket_Architecture_Current.pptx`) and the target proposal with MCP and A2A
+(`RealBasket_Architektur_Vorschlag_MCP_A2A.pptx` / `RealBasket_Architecture_Proposal_MCP_A2A.pptx`). Regenerate
+with `poetry run python docs/architecture/build_decks.py` (English texts in `docs/architecture/texts_en.py`; the
+build stops if a German text has no translation).
 
 ```
 Streamlit UI / CLI ──► Orchestrator Agent REALBASKET-ORCHESTRATOR (LLM chooses the tools)

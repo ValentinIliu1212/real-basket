@@ -1,13 +1,19 @@
-"""Build the architecture slide decks: current state and the MCP/A2A target proposal.
+"""Build the architecture slide decks (German and English): current state and the MCP/A2A target proposal.
 
 Run:  poetry run python docs/architecture/build_decks.py
 Output (next to this script):
-  - RealBasket_Architektur_Ist.pptx
-  - RealBasket_Architektur_Vorschlag_MCP_A2A.pptx
+  - RealBasket_Architektur_Ist.pptx                 / RealBasket_Architecture_Current.pptx
+  - RealBasket_Architektur_Vorschlag_MCP_A2A.pptx   / RealBasket_Architecture_Proposal_MCP_A2A.pptx
+
+The slides are written in German; the English decks translate every text via `texts_en.EN`
+(German text -> English text; `texts_en.SAME` lists language-neutral texts). A German text without translation
+stops the build with a list of the missing texts.
 """
 
 from __future__ import annotations
 
+import re
+import sys
 from pathlib import Path
 
 from pptx import Presentation
@@ -19,6 +25,8 @@ from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 OUT = Path(__file__).resolve().parent
+sys.path.insert(0, str(OUT))
+from texts_en import EN, SAME  # noqa: E402
 
 NAVY = RGBColor(0x1F, 0x3A, 0x5F)
 TEAL = RGBColor(0x2A, 0x9D, 0x8F)
@@ -33,6 +41,24 @@ WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 FOOTER = "RealBasket · Architektur · Stand November 2026"
 
 
+# --- language ---------------------------------------------------------------------------------------
+class Raw(str):
+    """Text that is already in the target language (or code) and must not be translated again."""
+
+
+LANG = "de"
+MISSING: list[str] = []
+
+
+def tr(text: str) -> str:
+    if LANG == "de" or isinstance(text, Raw) or text in SAME or not re.search(r"[A-Za-zÄÖÜäöüß]", text):
+        return text
+    if text not in EN:
+        MISSING.append(text)
+        return text
+    return EN[text]
+
+
 # --- helpers ---------------------------------------------------------------------------------------
 def new_deck() -> Presentation:
     prs = Presentation()
@@ -42,7 +68,7 @@ def new_deck() -> Presentation:
 
 def _runs(paragraph, text: str, size: float, color: RGBColor, bold: bool = False, font: str | None = None):
     run = paragraph.add_run()
-    run.text = text
+    run.text = tr(text)
     run.font.size, run.font.bold, run.font.color.rgb = Pt(size), bold, color
     if font:
         run.font.name = font
@@ -67,7 +93,7 @@ def bullets(s, x, y, w, h, items, size=18):
         text, level = item if isinstance(item, tuple) else (item, 0)
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.space_after = Pt(6)
-        _runs(p, ("      – " if level else "• ") + text, size - 3 * level, GREY if level else DARK)
+        _runs(p, Raw(("      – " if level else "• ") + tr(text)), size - 3 * level, GREY if level else DARK)
     return tf
 
 
@@ -125,7 +151,7 @@ def box(s, x, y, w, h, title, body=(), fill=LIGHT, fg=None, size=13, border=None
     for line in body:
         p = tf.add_paragraph()
         p.alignment = align
-        _runs(p, line, size - 2, fg, False, font)
+        _runs(p, Raw(line) if font else line, size - 2, fg, False, font)    # code (font set) is not translated
     return sh
 
 
@@ -169,7 +195,7 @@ def flow(s, steps, y=1.6, h=2.2, fills=None, size=13):
     for i, (title, body) in enumerate(steps):
         x = x0 + i * (w + gap)
         fill = (fills or [TEAL])[i % len(fills or [TEAL])]
-        box(s, x, y, w, h, f"{i + 1}  {title}", body, fill, size=size)
+        box(s, x, y, w, h, Raw(f"{i + 1}  {tr(title)}"), body, fill, size=size)
         if i < n - 1:
             arrow(s, x + w + 0.03, y + h / 2, x + w + gap - 0.03, y + h / 2, NAVY)
 
@@ -505,7 +531,7 @@ def proposal_deck() -> Presentation:
             "    area.register(server)",
             "",
             "server.run(\"stdio\")",
-            "# oder \"streamable-http\",",
+            "# or \"streamable-http\",",
             "#      port=8001"]),
         ("Fach-Agent als A2A-Dienst mit MCP-Tools", [
             "mcp = MCPClient(url=",
@@ -574,10 +600,33 @@ def proposal_deck() -> Presentation:
     return prs
 
 
+DECKS = {
+    "de": {"current": "RealBasket_Architektur_Ist.pptx", "proposal": "RealBasket_Architektur_Vorschlag_MCP_A2A.pptx"},
+    "en": {"current": "RealBasket_Architecture_Current.pptx",
+           "proposal": "RealBasket_Architecture_Proposal_MCP_A2A.pptx"},
+}
+
+
 def main() -> None:
-    current_deck().save(OUT / "RealBasket_Architektur_Ist.pptx")
-    proposal_deck().save(OUT / "RealBasket_Architektur_Vorschlag_MCP_A2A.pptx")
-    print(f"Decks written to {OUT}")
+    global LANG
+    built = {}
+    for lang, files in DECKS.items():
+        LANG = lang
+        built[files["current"]], built[files["proposal"]] = current_deck(), proposal_deck()
+    LANG = "de"
+    if MISSING:
+        missing = "\n".join(f"    {t!r}: \"\"," for t in dict.fromkeys(MISSING))
+        raise SystemExit(f"{len(set(MISSING))} texts without English translation (add to texts_en.py):\n"
+                         f"{missing}")
+    locked = []
+    for name, prs in built.items():
+        try:
+            prs.save(OUT / name)
+        except PermissionError:
+            locked.append(name)
+    if locked:
+        raise SystemExit(f"Close these files in PowerPoint and run again: {', '.join(locked)}")
+    print(f"Decks (de, en) written to {OUT}")
 
 
 if __name__ == "__main__":
