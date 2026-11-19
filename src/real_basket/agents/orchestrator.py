@@ -13,7 +13,6 @@ from real_basket.agents.tools import (
     fetch_prices,
     fetch_regional_rents,
     investigate_deviation,
-    run_monitoring_flow,
     search_methodology,
 )
 from real_basket.core.settings import get_settings
@@ -49,6 +48,6 @@ def create_orchestrator() -> Agent:
         system_prompt=ORCHESTRATOR_PROMPT,
         model=create_model(),
         tools=[collect_category_prices, fetch_official_cpi, calculate_essential_vs_cpi, fetch_regional_rents,
-               fetch_net_salaries, investigate_deviation, search_methodology, run_monitoring_flow],
+               fetch_net_salaries, investigate_deviation, search_methodology],
         callback_handler=None,
     )

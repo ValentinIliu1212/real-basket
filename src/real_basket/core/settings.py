@@ -8,38 +8,18 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL_ID: str = "gpt-4o-mini"
-    # Name of the interactive chat agent (front door). The monitoring flow agents are named
-    # f"{AGENT_NAME_PREFIX}-PLANNER", "-COLLECTOR", "-VALIDATOR", "-ANALYST", "-REPORTER".
-    AGENT_NAME: str = "REALBASKET-ORCHESTRATOR"
-    AGENT_NAME_PREFIX: str = "REALBASKET"
-    FLOW_TEMPERATURE: float = 0.3
+    AGENT_NAME: str = "REALBASKET-ORCHESTRATOR"   # chat agent; the collector sub-agent is REALBASKET-COLLECTOR
 
     DESTATIS_GENESIS_TOKEN: str = ""
     USE_DEMO_DATA: bool = True
 
-    # --- Non-deterministic monitoring flow: data store + guardrails ---------------------------
-    DATA_DIR: str = "data_store"
-    MAX_SOURCE_ATTEMPTS: int = 3          # fetch attempts per dataset before escalating to a human
-    MAX_INVESTIGATION_STEPS: int = 4      # drill-down tool calls per run
-    MAX_REPLANS: int = 1                  # analyst -> planner loops per run
-    MAX_NODE_EXECUTIONS: int = 30         # hard cap on graph node executions per run
-    RUN_TIMEOUT_S: int = 900              # wall-clock budget per run
-    DEVIATION_THRESHOLD_PP: float = 1.0   # |essential - CPI| above this requires an investigation
-    CONFIDENCE_THRESHOLD: float = 0.7     # below this a human must approve before publishing
-    # Re-using stored, validated data (planned re-use or fallback when fresh data is lost): at most this
-    # many trailing months may be carried forward with the last observed value (flagged in the report).
-    MAX_CARRY_FORWARD_MONTHS: int = 3
+    DATA_DIR: str = "data_store"               # local cache (method-note index)
 
     # --- Method notes from reference documents (RAG retrieval, see real_basket.knowledge) ---------
     KNOWLEDGE_DIR: str = "reports/real-data"   # PDFs whose method notes / caveats are indexed
     KNOWLEDGE_RETRIEVER: str = "auto"          # bm25 | embedding | auto (embedding if OPENAI_API_KEY set)
     EMBEDDING_MODEL_ID: str = "text-embedding-3-small"
     KNOWLEDGE_TOP_K: int = 4                   # passages per search
-    MAX_KNOWLEDGE_QUERIES: int = 3             # method-note searches per monitoring run (analyst + reporter)
-    # Probability that a demo "primary" source returns faulty data (outliers, gaps, missing
-    # provenance) so the validation loop has something to do. Set 0 for clean demo data.
-    DEMO_FAULT_RATE: float = 0.35
-    DEMO_FAULT_SEED: int | None = None    # set for reproducible fault injection (tests / demos)
 
 
 @lru_cache

@@ -1,7 +1,6 @@
-"""Tests of the method-notes retrieval (RAG) and its guardrails in the monitoring flow."""
+﻿"""Tests of the method-notes retrieval (RAG) and the chat tool `search_methodology`."""
 
 import re
-from datetime import date
 from pathlib import Path
 
 import pytest
@@ -9,12 +8,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 from real_basket.core.settings import get_settings
-from real_basket.core.store import DataStore
-from real_basket.flow.graph import FunctionNode, auto_approver, run_flow
-from real_basket.flow.tools import FlowTools
 from real_basket.knowledge import KnowledgeBase
 from real_basket.knowledge.ingest import page_chunks, strip_repeated_headers, table_text_cells
-from real_basket.schemas.flow import DatasetStatus, RunStatus, Trigger
 
 REAL_DOCS = Path(__file__).resolve().parents[1] / "reports" / "real-data"
 
@@ -50,7 +45,7 @@ def docs(tmp_path):
 @pytest.fixture
 def settings(monkeypatch):
     def apply(**env):
-        base = {"DEMO_FAULT_RATE": "0", "DEMO_FAULT_SEED": "1", "DESTATIS_GENESIS_TOKEN": "",
+        base = {"DESTATIS_GENESIS_TOKEN": "",
                 "KNOWLEDGE_RETRIEVER": "bm25", "OPENAI_API_KEY": ""}
         for k, v in {**base, **env}.items():
             monkeypatch.setenv(k, str(v))
@@ -122,58 +117,10 @@ def test_real_documents(tmp_path, settings):
     assert kb.search("Brandenburg Miete Bundesland")["passages"]
 
 
-# --- flow integration ---------------------------------------------------------------------------
-def scripted(results: dict, report_md: str, queries: int = 1):
-    def factory(ctx):
-        ft = FlowTools(ctx)
+def test_chat_tool_cites_file_and_page(docs, tmp_path, settings):
+    from real_basket.agents.tools import search_methodology
 
-        def planner():
-            return ft.submit_plan(24, "test", 1, "scripted", [])
-
-        def collector():
-            for d in ctx.with_status(DatasetStatus.PENDING):
-                from real_basket.data.sources import sources_for
-                ft.fetch(d, next(s.name for s in sources_for(d) if s.available()))
-            return "collected"
-
-        def validator():
-            for d in ctx.with_status(DatasetStatus.COLLECTED):
-                ft.decide(d, "accept", "scripted")
-            return "validated"
-
-        def analyst():
-            if ft.results().get("investigation_required"):
-                ft.investigate("category")
-            results["searches"] = [ft.search_methodology("Nettokaltmiete Wohnen") for _ in range(queries)]
-            results["bad_analysis"] = ft.submit_analysis("see [M7]", ["rent"], 0.9)
-            ft.submit_analysis("Housing is not net cold rent [M1].", ["rent"], 0.9)
-            return "analysed"
-
-        def reporter():
-            results["bad_report"] = ft.submit_report("# Report [M9]", ["chat"], 0.9)
-            return ft.submit_report(report_md, ["chat"], 0.9)
-
-        fns = {"planner": planner, "collector": collector, "validator": validator, "analyst": analyst,
-               "reporter": reporter}
-        return {n: FunctionNode(n, f) for n, f in fns.items()}
-    return factory
-
-
-def test_flow_citations_are_checked_and_listed(docs, tmp_path, settings):
-    settings(KNOWLEDGE_DIR=str(docs), MAX_KNOWLEDGE_QUERIES="2")
-    out: dict = {}
-    ctx = run_flow("test goal", Trigger.SCHEDULE, approver=auto_approver,
-                   executors=scripted(out, "# Report\nWohnen / Energie is not net cold rent [M1].", queries=3),
-                   store=DataStore(tmp_path / "store"), end=date(2025, 12, 1))
-    first, second, third = out["searches"]
-    assert first["passages"][0]["cite"] == "[M1]" and first["passages"][0]["source"] == "Bericht_2025.pdf"
-    assert second["passages"][0]["cite"] == "[M1]"          # same passage -> same citation id
-    assert "budget" in third["error"]
-    assert out["bad_analysis"].startswith("Rejected") and out["bad_report"].startswith("Rejected")
-    assert ctx.run_status == RunStatus.PUBLISHED
-    assert ctx.report["cited_notes"] == ["M1"]
-    md = ctx.report["final_markdown"]
-    assert "Method notes cited" in md and "[M1] Bericht_2025.pdf, p. 1" in md
-    events = [e["action"] for e in ctx.store.load_audit(ctx.run_id)]
-    assert events.count("unknown_citation_rejected") == 2 and "method_search" in events
-    assert ctx.store.load_run(ctx.run_id)["method_notes"]["M1"]["source"] == "Bericht_2025.pdf"
+    settings(KNOWLEDGE_DIR=str(docs), DATA_DIR=str(tmp_path / "store"))
+    res = search_methodology("Nettokaltmiete Wohnen")
+    assert res["passages"][0]["cite"] == "Bericht_2025.pdf p. 1"
+    assert "never take figures" in res["note"]

@@ -22,7 +22,7 @@ from real_basket.knowledge.ingest import ingest_documents
 
 INDEX_VERSION = 1
 USAGE_NOTE = ("Context and caveats from reference documents only. Cite passages; never take figures from "
-              "them - all numbers come from the validated datasets and the calculation engine.")
+              "them - all numbers come from the deterministic calculation tools.")
 
 _STOPWORDS = set("""
 der die das den dem des ein eine einer eines einem einen und oder nicht ist sind wird werden wurde wurden
