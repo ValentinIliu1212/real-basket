@@ -119,6 +119,20 @@ poetry run real-basket-knowledge --query "Ist Wohnen / Energie die Nettokaltmiet
 
 Settings in `.env`: `OPENAI_API_KEY`, `OPENAI_MODEL_ID`, `KNOWLEDGE_DIR` (default `reports/real-data`),
 `KNOWLEDGE_RETRIEVER` (`auto` | `bm25` | `embedding`), `EMBEDDING_MODEL_ID`, `KNOWLEDGE_TOP_K` (4).
+
+**Azure OpenAI** instead of api.openai.com (an Azure key sent to OpenAI fails with `401 Incorrect API key`):
+
+```dotenv
+OPENAI_API_TYPE=azure
+OPENAI_API_VERSION=2024-02-15-preview
+AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com/
+AZURE_OPENAI_API_KEY=<key>
+AZURE_COMPLETION_MODEL=gpt-4o                  # chat deployment name
+AZURE_EMBEDDING_MODEL=text-embedding-3-large   # embedding deployment name (method-note search)
+```
+
+The sidebar shows the active provider (`Azure OpenAI · gpt-4o`). Provider selection lives in
+`src/real_basket/core/llm.py`.
 Without PDFs the search returns no passages; everything else works unchanged.
 
 ### Dashboard tabs

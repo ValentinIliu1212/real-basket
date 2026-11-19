@@ -10,6 +10,14 @@ class Settings(BaseSettings):
     OPENAI_MODEL_ID: str = "gpt-4o-mini"
     AGENT_NAME: str = "REALBASKET-ORCHESTRATOR"   # chat agent; the collector sub-agent is REALBASKET-COLLECTOR
 
+    # --- Azure OpenAI (used when OPENAI_API_TYPE=azure; see real_basket.core.llm) ------------------
+    OPENAI_API_TYPE: str = ""                  # "" / openai -> api.openai.com | azure -> Azure OpenAI
+    OPENAI_API_VERSION: str = "2024-02-15-preview"
+    AZURE_OPENAI_ENDPOINT: str = ""            # e.g. https://<resource>.openai.azure.com/
+    AZURE_OPENAI_API_KEY: str = ""             # falls back to OPENAI_API_KEY when empty
+    AZURE_COMPLETION_MODEL: str = ""           # chat deployment name (falls back to OPENAI_MODEL_ID)
+    AZURE_EMBEDDING_MODEL: str = ""            # embedding deployment name (falls back to EMBEDDING_MODEL_ID)
+
     DESTATIS_GENESIS_TOKEN: str = ""
     USE_DEMO_DATA: bool = True
 

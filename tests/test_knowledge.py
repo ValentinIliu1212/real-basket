@@ -1,4 +1,4 @@
-﻿"""Tests of the method-notes retrieval (RAG) and the chat tool `search_methodology`."""
+"""Tests of the method-notes retrieval (RAG) and the chat tool `search_methodology`."""
 
 import re
 from pathlib import Path
@@ -45,8 +45,8 @@ def docs(tmp_path):
 @pytest.fixture
 def settings(monkeypatch):
     def apply(**env):
-        base = {"DESTATIS_GENESIS_TOKEN": "",
-                "KNOWLEDGE_RETRIEVER": "bm25", "OPENAI_API_KEY": ""}
+        base = {"DESTATIS_GENESIS_TOKEN": "", "KNOWLEDGE_RETRIEVER": "bm25", "OPENAI_API_KEY": "",
+                "OPENAI_API_TYPE": "", "AZURE_OPENAI_ENDPOINT": "", "AZURE_OPENAI_API_KEY": ""}
         for k, v in {**base, **env}.items():
             monkeypatch.setenv(k, str(v))
         get_settings.cache_clear()

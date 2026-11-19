@@ -8,6 +8,7 @@ import plotly.express as px
 import streamlit as st
 
 from real_basket.agents.prompts import DISCLAIMER
+from real_basket.core import llm
 from real_basket.core.income import DEFAULT_FLAT_SIZE_M2, average_salaries, rent_burden
 from real_basket.core.index import category_indices, compare_with_cpi, essential_index
 from real_basket.core.investigation import deviation_breakdown
@@ -89,10 +90,10 @@ for name, data in st.session_state.get("pdfs", {}).items():
     st.sidebar.download_button(name, data, file_name=name, mime="application/pdf", key=f"dl_{name}")
 
 settings = get_settings()
-has_key = bool(settings.OPENAI_API_KEY and not settings.OPENAI_API_KEY.startswith("sk-..."))
+has_key = llm.is_configured(settings)
 st.sidebar.header("⚙️ Status")
-st.sidebar.write(("✅" if has_key else "⚠️") + f" Agent: {settings.OPENAI_MODEL_ID}"
-                 + ("" if has_key else " (no OPENAI_API_KEY)"))
+st.sidebar.write(("✅" if has_key else "⚠️") + f" Agent: {llm.provider_label(settings)}"
+                 + ("" if has_key else " (no API key / endpoint)"))
 
 # --- Header: the story in one screen --------------------------------------------------------------
 st.title("🧺 RealBasket")
@@ -241,7 +242,8 @@ def _tools_used(messages: list) -> list[str]:
 
 with tab_agent:
     if not has_key:
-        st.warning("Set OPENAI_API_KEY in `.env` to chat with the agent.")
+        st.warning("Set OPENAI_API_KEY (OpenAI) or OPENAI_API_TYPE=azure + AZURE_OPENAI_ENDPOINT + "
+                   "AZURE_OPENAI_API_KEY + AZURE_COMPLETION_MODEL (Azure) in `.env` to chat with the agent.")
     st.session_state.setdefault("messages", [])
     cols = st.columns(len(EXAMPLE_QUESTIONS) + 1)
     for col, q in zip(cols, EXAMPLE_QUESTIONS):

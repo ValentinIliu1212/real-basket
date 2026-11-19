@@ -3,8 +3,9 @@
 Retrievers
 - `bm25`      keyword search, offline. German-aware: light stemming, compound matching ("Kaltmiete" finds
               "Nettokaltmiete") and a small English -> German glossary so English queries of the agents work.
-- `embedding` OpenAI embeddings (multilingual), fused with BM25 by reciprocal rank fusion.
-- `auto`      embedding if an OPENAI_API_KEY is configured, else bm25. Embedding errors fall back to bm25.
+- `embedding` OpenAI / Azure OpenAI embeddings (multilingual), fused with BM25 by reciprocal rank fusion.
+- `auto`      embedding if an LLM provider is configured (see core.llm), else bm25. Embedding errors fall
+              back to bm25.
 
 The index (data_store/knowledge/index.json) is rebuilt automatically when the documents change.
 """
@@ -17,6 +18,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from real_basket.core import llm
 from real_basket.core.settings import Settings, get_settings
 from real_basket.knowledge.ingest import ingest_documents
 
@@ -129,7 +131,7 @@ class KnowledgeBase:
     def retriever(self) -> str:
         mode = self.settings.KNOWLEDGE_RETRIEVER.lower()
         if mode == "auto":
-            return "embedding" if self.settings.OPENAI_API_KEY else "bm25"
+            return "embedding" if llm.is_configured(self.settings) else "bm25"
         return mode
 
     def _bm25(self, chunks: list[dict], query: str, k1: float = 1.5, b: float = 0.75) -> list[float]:
@@ -147,14 +149,12 @@ class KnowledgeBase:
                 for row, doc in zip(tf, docs)]
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=self.settings.OPENAI_API_KEY)
-        resp = client.embeddings.create(model=self.settings.EMBEDDING_MODEL_ID, input=texts)
+        client = llm.sync_client(self.settings)
+        resp = client.embeddings.create(model=llm.embedding_model_id(self.settings), input=texts)
         return [d.embedding for d in resp.data]
 
     def _embedding_scores(self, index: dict, query: str) -> list[float]:
-        model = self.settings.EMBEDDING_MODEL_ID
+        model = ("azure:" if llm.use_azure(self.settings) else "") + llm.embedding_model_id(self.settings)
         emb = index.get("embeddings")
         if not emb or emb.get("model") != model or len(emb["vectors"]) != len(index["chunks"]):
             vectors = self._embed([f"{c['section']}: {c['text']}" for c in index["chunks"]])
