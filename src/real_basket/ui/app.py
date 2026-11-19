@@ -152,8 +152,8 @@ if basket.real is not None:
         st.caption("Quellen: " + ", ".join(basket.real.documents))
 
 tab_overview, tab_drivers, tab_rent, tab_income, tab_method, tab_agent = st.tabs(
-    ["📈 Index vs. VPI", "🧩 Treiber", "🏠 Miete regional", "💶 Nettogehalt", "📚 Methodenhinweise (RAG)",
-     "🤖 Agent fragen"])
+    ["📈 Index vs. VPI", "🧩 Einflussfaktoren", "🏠 Miete regional", "💶 Nettogehalt", "📚 Methodenhinweise (RAG)",
+     "🤖 Chat mit RealBasket"])
 
 with tab_overview:
     col_idx, col_yoy = st.columns(2)

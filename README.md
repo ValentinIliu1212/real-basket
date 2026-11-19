@@ -20,11 +20,11 @@ baskets of goods and different weightings.
 2. Move the **basket weights** in the sidebar → index, deviation and drivers update immediately (untouched
    sliders = exact expenditure shares of the reference basket). Switch **Datenquelle** real ↔ demo; the chat
    agent follows that choice (a new chat starts).
-3. **🧩 Treiber**: which category causes the deviation (contributions add up exactly to the deviation).
+3. **🧩 Einflussfaktoren**: which category causes the deviation (contributions add up exactly to the deviation).
 4. **🏠 Miete regional / 💶 Nettogehalt**: rents per state (demo) / city (real), rent burden (demo).
 5. **📚 Methodenhinweise (RAG)**: search the unstructured reference PDFs, e.g. *"Ist Wohnen / Energie die
    Nettokaltmiete?"* → passage with file and page.
-6. **🤖 Agent fragen**: click an example question; the answer (always German) shows which tools were used.
+6. **🤖 Chat mit RealBasket**: click an example question; the answer (always German) shows which tools were used.
 7. Sidebar **📄 PDF-Berichte**: download the reference PDFs and the generated German demo reports.
 
 ## Features
@@ -157,11 +157,11 @@ Without PDFs the search returns no passages; everything else works unchanged.
 |-----|---------|
 | Header | Essential inflation, VPI, deviation and biggest driver of the latest month + disclaimer + data check |
 | 📈 Index vs. VPI | Both indices (base = 100), YoY rates and deviation (PP); real data: monthly costs per group |
-| 🧩 Treiber | Contribution of each category to the deviation, index per category |
+| 🧩 Einflussfaktoren | Contribution of each category to the deviation, index per category |
 | 🏠 Miete regional | Cities: real asking rents Jan/Oct 2026; states: demo rent per m², YoY, comparison chart |
 | 💶 Nettogehalt | Ø net salary per state, rent burden with flat-size slider, tables per year (demo) |
 | 📚 Methodenhinweise (RAG) | Index status and search over the reference PDFs with file + page |
-| 🤖 Agent fragen | Chat (German) with follow-up questions, example questions, tools used per answer |
+| 🤖 Chat mit RealBasket | Chat (German) with follow-up questions, example questions, tools used per answer |
 
 ### PDF reports
 
